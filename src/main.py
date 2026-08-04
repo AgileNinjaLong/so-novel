@@ -30,6 +30,8 @@ class NovelReadApp:
         # 信号绑定
         self.floating_view.switch_mode_signal.connect(self.switch_view_mode)
         self.ide_view.switch_mode_signal.connect(self.switch_view_mode)
+        self.floating_view.file_loaded_signal.connect(lambda path: self.ide_view.load_file(path, notify=False))
+        self.ide_view.file_loaded_signal.connect(lambda path: self.floating_view.load_file(path, notify=False))
 
         # 启动全局老板键服务
         boss_key_str = self.config_mgr.settings.get("boss_key", "Alt+Z")

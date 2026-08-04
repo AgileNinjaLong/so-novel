@@ -1,7 +1,7 @@
 import os
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtWidgets import QWidget, QMenu, QFileDialog, QMessageBox
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent, QMouseEvent, QCursor
+from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QMouseEvent, QCursor
 
 class BaseStealthWindow(QWidget):
     def __init__(self, config_manager, parent=None):
@@ -43,7 +43,6 @@ class BaseStealthWindow(QWidget):
 
     def leaveEvent(self, event):
         if not self.is_dialog_open:
-            # 延迟校验鼠标是否真的离开了窗口
             self.setWindowOpacity(self.idle_opacity)
         super().leaveEvent(event)
 
@@ -61,12 +60,23 @@ class BaseStealthWindow(QWidget):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
 
+    def dragMoveEvent(self, event: QDragMoveEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
     def dropEvent(self, event: QDropEvent):
-        urls = event.mimeData().urls()
-        if urls:
-            file_path = urls[0].toLocalFile()
-            if os.path.exists(file_path):
-                self.load_file(file_path)
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if not file_path:
+                    file_path = url.toString()
+                    if file_path.startswith("file:///"):
+                        file_path = file_path[8:]
+                file_path = os.path.normpath(file_path)
+                if os.path.exists(file_path):
+                    event.acceptProposedAction()
+                    self.load_file(file_path)
+                    break
 
     def load_file(self, file_path: str):
         """子类覆盖实现"""

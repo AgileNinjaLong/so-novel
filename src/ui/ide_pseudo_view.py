@@ -9,6 +9,7 @@ from src.core.book import Book
 
 class IDEPseudoView(BaseStealthWindow):
     switch_mode_signal = pyqtSignal()
+    file_loaded_signal = pyqtSignal(str)
 
     def __init__(self, config_manager, parent=None):
         super().__init__(config_manager, parent)
@@ -23,6 +24,8 @@ class IDEPseudoView(BaseStealthWindow):
         self.editor = QTextEdit()
         self.editor.setReadOnly(True)
         self.editor.setFont(QFont("Consolas", 10))
+        self.editor.setAcceptDrops(False)
+        self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         
         # 背景色设置为 RGB(51, 51, 51) / #333333, 配色贴合暗黑系 IDE/Terminal
         self.editor.setStyleSheet("""
@@ -49,7 +52,7 @@ class IDEPseudoView(BaseStealthWindow):
         ]
         self.editor.setText("\n".join(sample_log))
 
-    def load_file(self, file_path: str):
+    def load_file(self, file_path: str, notify: bool = True):
         if not file_path or not os.path.exists(file_path):
             self.editor.setText("[WARNING] 上次阅读的文件已被删除或移动，请右键重新选择文件。")
             return
@@ -59,6 +62,8 @@ class IDEPseudoView(BaseStealthWindow):
             self.book.current_chapter_idx = prog.get("chapter_idx", 0)
             self.book.current_line_idx = prog.get("line_idx", 0)
             self.update_content()
+            if notify:
+                self.file_loaded_signal.emit(file_path)
         except Exception as e:
             self.editor.setText(f"[ERROR] Failed to parse file: {str(e)}")
 
