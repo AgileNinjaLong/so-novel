@@ -1,6 +1,7 @@
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QMenu, QFileDialog, QDialog
 from PyQt6.QtGui import QFont, QWheelEvent, QKeyEvent
+import os
 from src.ui.base_window import BaseStealthWindow
 from src.ui.chapter_dialog import ChapterDialog
 from src.core.parser import NovelParser
@@ -45,13 +46,26 @@ class FloatingView(BaseStealthWindow):
 
     def load_file(self, file_path: str, notify: bool = True):
         if not file_path or not os.path.exists(file_path):
-            self.label.setText("提示：上次阅读的文件已不存在，请重新打开")
+            self.label.setText("提示：文件不存在，请右键重新选择文件")
             return
         try:
             self.book = NovelParser.load_book(file_path)
+            if not self.book.chapters:
+                self.label.setText("提示：该文件暂无文字内容")
+                return
+
             prog = self.config_mgr.get_progress(file_path)
-            self.book.current_chapter_idx = prog.get("chapter_idx", 0)
-            self.book.current_line_idx = prog.get("line_idx", 0)
+            chap_idx = prog.get("chapter_idx", 0)
+            line_idx = prog.get("line_idx", 0)
+
+            # 校验索引是否越界
+            if chap_idx >= len(self.book.chapters) or chap_idx < 0:
+                chap_idx = 0
+                line_idx = 0
+
+            self.book.current_chapter_idx = chap_idx
+            self.book.current_line_idx = line_idx
+
             self.update_content()
             if notify:
                 self.file_loaded_signal.emit(file_path)
@@ -69,8 +83,8 @@ class FloatingView(BaseStealthWindow):
         line_len = self.config_mgr.settings.get("line_length", 35)
         self.lines = chap.get_lines(line_length=line_len)
 
-        if self.book.current_line_idx >= len(self.lines):
-            self.book.current_line_idx = max(0, len(self.lines) - 1)
+        if self.book.current_line_idx >= len(self.lines) or self.book.current_line_idx < 0:
+            self.book.current_line_idx = 0
 
         current_line_text = self.lines[self.book.current_line_idx] if self.lines else ""
         total_chaps = self.book.total_chapters
@@ -170,7 +184,7 @@ class FloatingView(BaseStealthWindow):
         if action == open_action:
             self.is_dialog_open = True
             file_path, _ = QFileDialog.getOpenFileName(
-                self, "选择电子书", "", "Books (*.txt *.epub *.pdf)"
+                self, "选择电子书", "", "Books (*.txt *.epub *.pdf);;All Files (*)"
             )
             self.is_dialog_open = False
             if file_path:

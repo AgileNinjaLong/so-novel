@@ -58,9 +58,21 @@ class IDEPseudoView(BaseStealthWindow):
             return
         try:
             self.book = NovelParser.load_book(file_path)
+            if not self.book.chapters:
+                self.editor.setText("[NOTICE] 该文件无可用文字内容。")
+                return
+
             prog = self.config_mgr.get_progress(file_path)
-            self.book.current_chapter_idx = prog.get("chapter_idx", 0)
-            self.book.current_line_idx = prog.get("line_idx", 0)
+            chap_idx = prog.get("chapter_idx", 0)
+            line_idx = prog.get("line_idx", 0)
+
+            if chap_idx >= len(self.book.chapters) or chap_idx < 0:
+                chap_idx = 0
+                line_idx = 0
+
+            self.book.current_chapter_idx = chap_idx
+            self.book.current_line_idx = line_idx
+
             self.update_content()
             if notify:
                 self.file_loaded_signal.emit(file_path)
