@@ -23,12 +23,16 @@ class IDEPseudoView(BaseStealthWindow):
         self.editor = QTextEdit()
         self.editor.setReadOnly(True)
         self.editor.setFont(QFont("Consolas", 10))
+        
+        # 背景色设置为 RGB(51, 51, 51) / #333333, 配色贴合暗黑系 IDE/Terminal
         self.editor.setStyleSheet("""
             QTextEdit {
-                background-color: #1E1E1E;
-                color: #D4D4D4;
-                border: 1px solid #333333;
+                background-color: rgb(51, 51, 51);
+                color: #CCCCCC;
+                border: 1px solid #444444;
                 border-radius: 4px;
+                padding: 6px;
+                font-family: 'Consolas', 'Courier New', monospace;
             }
         """)
 
@@ -40,7 +44,7 @@ class IDEPseudoView(BaseStealthWindow):
         sample_log = [
             "[INFO 10:42:01] Initializing background task daemon...",
             "[DEBUG 10:42:02] Loading module: core.network.service...",
-            "# [DEBUG 10:42:03] NovelRead IDE Pseudo Mode (F12 切换模式, 右键打开电子书)",
+            "# [DEBUG 10:42:03] NovelRead IDE Pseudo Mode - RGB(51,51,51) (F12 切换模式, 右键打开电子书)",
             "[INFO 10:42:04] Worker thread pool started with 8 threads."
         ]
         self.editor.setText("\n".join(sample_log))
