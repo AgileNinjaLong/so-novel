@@ -50,6 +50,9 @@ class IDEPseudoView(BaseStealthWindow):
         self.editor.setText("\n".join(sample_log))
 
     def load_file(self, file_path: str):
+        if not file_path or not os.path.exists(file_path):
+            self.editor.setText("[WARNING] 上次阅读的文件已被删除或移动，请右键重新选择文件。")
+            return
         try:
             self.book = NovelParser.load_book(file_path)
             prog = self.config_mgr.get_progress(file_path)

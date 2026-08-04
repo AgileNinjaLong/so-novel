@@ -42,6 +42,9 @@ class FloatingView(BaseStealthWindow):
         self.setLayout(layout)
 
     def load_file(self, file_path: str):
+        if not file_path or not os.path.exists(file_path):
+            self.label.setText("提示：上次阅读的文件已不存在，请重新打开")
+            return
         try:
             self.book = NovelParser.load_book(file_path)
             prog = self.config_mgr.get_progress(file_path)

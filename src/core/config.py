@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from PyQt6.QtCore import QTimer, QObject
 
 DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".novelread", "config.json")
@@ -14,7 +14,8 @@ DEFAULT_SETTINGS = {
     "font_family": "Microsoft YaHei",
     "font_color": "#333333",
     "bg_color": "#FFFFFF",
-    "line_length": 35
+    "line_length": 35,
+    "last_file": ""      # 上次打开的图书路径
 }
 
 class ConfigManager(QObject):
@@ -62,8 +63,19 @@ class ConfigManager(QObject):
             "chapter_idx": chapter_idx,
             "line_idx": line_idx
         }
-        # 触发防抖保存，避免每次滚轮滑动都操作IO
+        self.settings["last_file"] = file_path
+        # 触发防抖保存
         self._save_timer.start()
+
+    def get_last_file(self) -> Optional[str]:
+        last_file = self.settings.get("last_file", "")
+        if last_file and os.path.exists(last_file):
+            return last_file
+        elif last_file:
+            # 文件不存在或已被删除，清除记录
+            self.settings["last_file"] = ""
+            self.save_immediately()
+        return None
         
     def save_immediately(self):
         if self._save_timer.isActive():

@@ -41,6 +41,11 @@ class NovelReadApp:
         self.app.aboutToQuit.connect(self.config_mgr.save_immediately)
 
     def show(self):
+        # 自动加载上一次的小说（若存在）
+        last_file = self.config_mgr.get_last_file()
+        if last_file:
+            self.floating_view.load_file(last_file)
+            self.ide_view.load_file(last_file)
         self.active_window.show()
 
     def switch_view_mode(self):
