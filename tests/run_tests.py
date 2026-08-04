@@ -64,6 +64,7 @@ class TestConfig(unittest.TestCase):
             config = ConfigManager(config_path=tmp_path)
             config.settings["boss_key"] = "Ctrl+Shift+H"
             config.save_progress("D:/books/test.txt", chapter_idx=5, line_idx=12)
+            config.save_immediately()
 
             config2 = ConfigManager(config_path=tmp_path)
             self.assertEqual(config2.settings["boss_key"], "Ctrl+Shift+H")

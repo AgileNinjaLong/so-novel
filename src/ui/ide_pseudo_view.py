@@ -1,4 +1,5 @@
-from PyQt6.QtCore import Qt, pyqtSignal
+import datetime
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QTextEdit, QVBoxLayout, QMenu, QFileDialog, QDialog
 from PyQt6.QtGui import QFont, QKeyEvent, QWheelEvent
 from src.ui.base_window import BaseStealthWindow
@@ -139,6 +140,17 @@ class IDEPseudoView(BaseStealthWindow):
         else:
             super().keyPressEvent(event)
 
+    def open_chapter_dialog(self):
+        if not self.book or not self.book.chapters:
+            return
+        self.is_dialog_open = True
+        self.setWindowOpacity(self.active_opacity)
+        dialog = ChapterDialog(self.book.chapters, self.book.current_chapter_idx, None)
+        res = dialog.exec()
+        self.is_dialog_open = False
+        if res == QDialog.DialogCode.Accepted:
+            self.jump_to_chapter(dialog.selected_index)
+
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         open_action = menu.addAction("📂 打开电子书 (TXT/EPUB/PDF)")
@@ -166,13 +178,6 @@ class IDEPseudoView(BaseStealthWindow):
         elif action == switch_action:
             self.switch_mode_signal.emit()
         elif chap_action and action == chap_action:
-            self.is_dialog_open = True
-            self.setWindowOpacity(self.active_opacity)
-            dialog = ChapterDialog(self.book.chapters, self.book.current_chapter_idx, None)
-            res = dialog.exec()
-            self.is_dialog_open = False
-            if res == QDialog.DialogCode.Accepted:
-                self.jump_to_chapter(dialog.selected_index)
+            QTimer.singleShot(10, self.open_chapter_dialog)
         elif action == quit_action:
             self.close()
-

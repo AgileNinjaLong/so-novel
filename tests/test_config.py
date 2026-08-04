@@ -11,6 +11,7 @@ def test_config_save_and_load():
         config = ConfigManager(config_path=tmp_path)
         config.settings["boss_key"] = "Ctrl+Shift+H"
         config.save_progress("D:/books/test.txt", chapter_idx=5, line_idx=12)
+        config.save_immediately()
 
         # 重新加载验证
         config2 = ConfigManager(config_path=tmp_path)

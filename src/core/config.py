@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Dict, Any
+from PyQt6.QtCore import QTimer, QObject
 
 DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".novelread", "config.json")
 
@@ -16,11 +17,19 @@ DEFAULT_SETTINGS = {
     "line_length": 35
 }
 
-class ConfigManager:
+class ConfigManager(QObject):
     def __init__(self, config_path: str = DEFAULT_CONFIG_PATH):
+        super().__init__()
         self.config_path = config_path
         self.settings: Dict[str, Any] = DEFAULT_SETTINGS.copy()
         self.history: Dict[str, Dict[str, Any]] = {}
+        
+        # 延迟保存定时器（防频写磁盘卡顿）
+        self._save_timer = QTimer()
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1000)  # 1秒防抖
+        self._save_timer.timeout.connect(self.save)
+        
         self.load()
 
     def load(self):
@@ -53,4 +62,10 @@ class ConfigManager:
             "chapter_idx": chapter_idx,
             "line_idx": line_idx
         }
+        # 触发防抖保存，避免每次滚轮滑动都操作IO
+        self._save_timer.start()
+        
+    def save_immediately(self):
+        if self._save_timer.isActive():
+            self._save_timer.stop()
         self.save()

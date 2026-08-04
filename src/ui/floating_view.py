@@ -1,5 +1,5 @@
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QMenu, QFileDialog, QMessageBox, QFontDialog
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QMenu, QFileDialog, QDialog
 from PyQt6.QtGui import QFont, QWheelEvent, QKeyEvent
 from src.ui.base_window import BaseStealthWindow
 from src.ui.chapter_dialog import ChapterDialog
@@ -72,7 +72,7 @@ class FloatingView(BaseStealthWindow):
         text = f"[{chap.title}] {current_line_text}  ({progress_pct}%)"
         self.label.setText(text)
         
-        # 实时保存进度
+        # 异步/防抖保存进度
         self.config_mgr.save_progress(
             self.book.file_path,
             self.book.current_chapter_idx,
@@ -132,6 +132,17 @@ class FloatingView(BaseStealthWindow):
         else:
             super().keyPressEvent(event)
 
+    def open_chapter_dialog(self):
+        if not self.book or not self.book.chapters:
+            return
+        self.is_dialog_open = True
+        self.setWindowOpacity(self.active_opacity)
+        dialog = ChapterDialog(self.book.chapters, self.book.current_chapter_idx, None)
+        res = dialog.exec()
+        self.is_dialog_open = False
+        if res == QDialog.DialogCode.Accepted:
+            self.jump_to_chapter(dialog.selected_index)
+
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         open_action = menu.addAction("📂 打开电子书 (TXT/EPUB/PDF)")
@@ -159,13 +170,8 @@ class FloatingView(BaseStealthWindow):
         elif action == switch_action:
             self.switch_mode_signal.emit()
         elif chap_action and action == chap_action:
-            self.is_dialog_open = True
-            self.setWindowOpacity(self.active_opacity)
-            dialog = ChapterDialog(self.book.chapters, self.book.current_chapter_idx, None)
-            res = dialog.exec()
-            self.is_dialog_open = False
-            if res == QDialog.DialogCode.Accepted:
-                self.jump_to_chapter(dialog.selected_index)
+            # 延迟10ms呼出，等右键菜单完全关闭
+            QTimer.singleShot(10, self.open_chapter_dialog)
         elif action == quit_action:
             self.close()
 
@@ -174,4 +180,3 @@ class FloatingView(BaseStealthWindow):
             self.book.current_chapter_idx = idx
             self.book.current_line_idx = 0
             self.update_content()
-
