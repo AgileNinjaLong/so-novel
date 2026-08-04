@@ -1,4 +1,5 @@
 import datetime
+import os
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QTextEdit, QVBoxLayout, QMenu, QFileDialog, QDialog
 from PyQt6.QtGui import QFont, QKeyEvent, QWheelEvent
@@ -6,6 +7,43 @@ from src.ui.base_window import BaseStealthWindow
 from src.ui.chapter_dialog import ChapterDialog
 from src.core.parser import NovelParser
 from src.core.book import Book
+
+class LogTextEdit(QTextEdit):
+    def __init__(self, parent_view=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.parent_view = parent_view
+
+    def wheelEvent(self, event: QWheelEvent):
+        delta = event.angleDelta().y()
+        if self.parent_view:
+            if delta < 0:
+                self.parent_view.next_line()
+            else:
+                self.parent_view.prev_line()
+        event.accept()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if not self.parent_view:
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
+            self.parent_view.next_line()
+        elif key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
+            self.parent_view.prev_line()
+        elif key == Qt.Key.Key_PageDown:
+            if self.parent_view.book and self.parent_view.book.next_chapter():
+                self.parent_view.update_content()
+        elif key == Qt.Key.Key_PageUp:
+            if self.parent_view.book and self.parent_view.book.prev_chapter():
+                self.parent_view.update_content()
+        elif key == Qt.Key.Key_Escape:
+            self.parent_view.toggle_boss_key()
+        elif key == Qt.Key.Key_F12:
+            self.parent_view.switch_mode_signal.emit()
+        else:
+            super().keyPressEvent(event)
 
 class IDEPseudoView(BaseStealthWindow):
     switch_mode_signal = pyqtSignal()
@@ -21,7 +59,7 @@ class IDEPseudoView(BaseStealthWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(4, 4, 4, 4)
 
-        self.editor = QTextEdit()
+        self.editor = LogTextEdit(parent_view=self)
         self.editor.setReadOnly(True)
         self.editor.setFont(QFont("Consolas", 10))
         self.editor.setAcceptDrops(False)
@@ -157,6 +195,12 @@ class IDEPseudoView(BaseStealthWindow):
             self.next_line()
         elif key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
             self.prev_line()
+        elif key == Qt.Key.Key_PageDown:
+            if self.book and self.book.next_chapter():
+                self.update_content()
+        elif key == Qt.Key.Key_PageUp:
+            if self.book and self.book.prev_chapter():
+                self.update_content()
         elif key == Qt.Key.Key_Escape:
             self.toggle_boss_key()
         elif key == Qt.Key.Key_F12:
