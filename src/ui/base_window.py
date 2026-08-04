@@ -1,7 +1,7 @@
 import os
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtWidgets import QWidget, QMenu, QFileDialog, QMessageBox
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent, QMouseEvent
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent, QMouseEvent, QCursor
 
 class BaseStealthWindow(QWidget):
     def __init__(self, config_manager, parent=None):
@@ -27,13 +27,23 @@ class BaseStealthWindow(QWidget):
         self.setAcceptDrops(True)
         self.setWindowOpacity(self.active_opacity)
 
-    def enterEvent(self, event):
-        if not self.is_dialog_open:
+    def update_opacity_by_hover(self):
+        if self.is_dialog_open:
             self.setWindowOpacity(self.active_opacity)
+            return
+        cursor_pos = QCursor.pos()
+        if self.frameGeometry().contains(cursor_pos):
+            self.setWindowOpacity(self.active_opacity)
+        else:
+            self.setWindowOpacity(self.idle_opacity)
+
+    def enterEvent(self, event):
+        self.setWindowOpacity(self.active_opacity)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         if not self.is_dialog_open:
+            # 延迟校验鼠标是否真的离开了窗口
             self.setWindowOpacity(self.idle_opacity)
         super().leaveEvent(event)
 
@@ -72,3 +82,4 @@ class BaseStealthWindow(QWidget):
             self.raise_()
             self.activateWindow()
             self.is_boss_hidden = False
+            self.setWindowOpacity(self.active_opacity)

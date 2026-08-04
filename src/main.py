@@ -1,10 +1,20 @@
 import sys
 import os
-from PyQt6.QtWidgets import QApplication
+import traceback
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from src.core.config import ConfigManager
 from src.ui.floating_view import FloatingView
 from src.ui.ide_pseudo_view import IDEPseudoView
 from src.ui.boss_key import BossKeyManager
+
+def handle_exception(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    err_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    print(f"CRITICAL ERROR: {err_msg}", file=sys.stderr)
+
+sys.excepthook = handle_exception
 
 class NovelReadApp:
     def __init__(self):
@@ -27,6 +37,9 @@ class NovelReadApp:
         self.boss_mgr.triggered.connect(self.on_boss_key_triggered)
         self.boss_mgr.start()
 
+        # 程序退出前强制持久化保存
+        self.app.aboutToQuit.connect(self.config_mgr.save_immediately)
+
     def show(self):
         self.active_window.show()
 
@@ -43,7 +56,7 @@ class NovelReadApp:
             self.active_window = self.floating_view
 
         self.config_mgr.settings["mode"] = self.current_mode
-        self.config_mgr.save()
+        self.config_mgr.save_immediately()
 
         if book:
             self.active_window.book = book

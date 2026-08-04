@@ -145,11 +145,12 @@ class IDEPseudoView(BaseStealthWindow):
             return
         self.is_dialog_open = True
         self.setWindowOpacity(self.active_opacity)
-        dialog = ChapterDialog(self.book.chapters, self.book.current_chapter_idx, None)
+        dialog = ChapterDialog(self.book.chapters, self.book.current_chapter_idx, self)
         res = dialog.exec()
-        self.is_dialog_open = False
         if res == QDialog.DialogCode.Accepted:
             self.jump_to_chapter(dialog.selected_index)
+        self.is_dialog_open = False
+        self.update_opacity_by_hover()
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
