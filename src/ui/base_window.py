@@ -8,6 +8,7 @@ from src.core.parser import NovelParser
 from src.core.book import Book
 from src.ui.chapter_dialog import ChapterDialog
 from src.ui.settings_dialog import SettingsDialog
+from src.ui.download_dialog import DownloadDialog
 
 class BaseStealthWindow(QWidget):
     switch_mode_signal = pyqtSignal()
