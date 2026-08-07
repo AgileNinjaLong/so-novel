@@ -4,7 +4,7 @@ import re
 import urllib.parse
 from typing import List, Dict, Any, Optional
 import requests
-from bs4 import BeautifulSoup
+from lxml import html
 
 RULES_PATH = os.path.join("SoNovel", "rules", "main.json")
 
@@ -15,7 +15,6 @@ class SoNovelClient:
             with open(rules_path, 'r', encoding='utf-8') as f:
                 self.rules = json.load(f)
         
-        # 默认 headers
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
@@ -33,36 +32,69 @@ class SoNovelClient:
                 payload[k] = v
         return payload
 
-    def _extract_text(self, element, selector: str):
-        if not element or not selector:
+    def _apply_js(self, text: str, js_code: str) -> str:
+        if not js_code:
+            return text
+        try:
+            from py_mini_racer import MiniRacer
+            ctx = MiniRacer()
+            # 将当前提取的文本变量绑定到 js 的 r 变量中
+            ctx.eval(f"var r = {json.dumps(text)};")
+            
+            # 由于 SoNovel 的 js 是直接操作 r 变量，如 r=r.replace(...)
+            # 所以我们需要执行完该语句后，返回 r 的最终值
+            js_script = js_code + "\n r;"
+            result = ctx.eval(js_script)
+            return str(result)
+        except Exception as e:
+            print(f"JS 执行异常: {e}\nCode: {js_code}")
+            return text
+
+    def _select_elements(self, tree, selector: str):
+        if not selector:
+            return []
+        try:
+            if selector.startswith('//') or selector.startswith('./') or selector.startswith('(/'):
+                return tree.xpath(selector)
+            else:
+                from lxml.cssselect import CSSSelector
+                return CSSSelector(selector)(tree)
+        except Exception:
+            return []
+
+    def _extract_text(self, tree, rule_str: str, base_url: str = "") -> str:
+        if not tree or not rule_str:
             return ""
-        
+
+        js_code = ""
+        if '@js:' in rule_str:
+            rule_str, js_code = rule_str.split('@js:', 1)
+
         attr = None
-        if '@' in selector:
-            selector, attr = selector.split('@', 1)
-            
-        nodes = element.select(selector) if selector else [element]
-        if not nodes:
+        if '@' in rule_str and not rule_str.startswith('//') and ']' not in rule_str.split('@')[-1]:
+            rule_str, attr = rule_str.split('@', 1)
+
+        elements = self._select_elements(tree, rule_str) if rule_str else [tree]
+        if not elements:
             return ""
-            
+
+        element = elements[0]
         if attr:
-            return nodes[0].get(attr, "")
+            text = element.get(attr, "")
+            if attr.lower() in ('href', 'src') and base_url:
+                text = urllib.parse.urljoin(base_url, text)
         else:
-            return nodes[0].get_text(strip=True)
-            
-    def _extract_link(self, element, selector: str, base_url: str):
-        if not element or not selector:
-            return ""
-        # 很多书源的 url 默认在 a 标签的 href 中
-        attr = "href"
-        if '@' in selector:
-            selector, attr = selector.split('@', 1)
-            
-        nodes = element.select(selector) if selector else [element]
-        if not nodes:
-            return ""
-        link = nodes[0].get(attr, "")
-        return urllib.parse.urljoin(base_url, link)
+            if hasattr(element, 'text_content'):
+                text = element.text_content().strip()
+            elif isinstance(element, str): # xpath can return strings directly
+                text = element.strip()
+            else:
+                text = str(element).strip()
+
+        if js_code:
+            text = self._apply_js(text, js_code)
+
+        return text
 
     def search(self, keyword: str) -> List[Dict[str, Any]]:
         results = []
@@ -92,20 +124,20 @@ class SoNovelClient:
                 else:
                     resp = requests.get(url, params=data, headers=self.headers, cookies=cookies, timeout=10)
                 
-                # 尝试猜测正确编码
-                if resp.encoding == 'ISO-8859-1':
+                if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                     resp.encoding = resp.apparent_encoding
                 
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                items = soup.select(search_rule.get("result", ""))
+                tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
+                items = self._select_elements(tree, search_rule.get("result", ""))
                 
                 for item in items:
                     book_name = self._extract_text(item, search_rule.get("bookName"))
                     author = self._extract_text(item, search_rule.get("author"))
                     latest_chap = self._extract_text(item, search_rule.get("latestChapter"))
                     
-                    # 小说详情页或目录页链接
-                    book_url = self._extract_link(item, search_rule.get("bookName"), resp.url)
+                    book_url = self._extract_text(item, search_rule.get("bookName") + "@href", resp.url)
+                    if not book_url and hasattr(item, 'get'):
+                        book_url = item.get("href", "")
                     
                     if book_name and book_url:
                         results.append({
@@ -117,64 +149,121 @@ class SoNovelClient:
                             "rule": rule
                         })
             except Exception as e:
-                # 屏蔽超时等网络错误，继续下一个书源
+                # 屏蔽超时异常
                 continue
                 
         return results
 
     def get_toc(self, book_url: str, rule: dict) -> List[Dict[str, str]]:
         toc_rule = rule.get("toc", {})
-        try:
-            resp = requests.get(book_url, headers=self.headers, timeout=10)
-            if resp.encoding == 'ISO-8859-1':
-                resp.encoding = resp.apparent_encoding
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            items = soup.select(toc_rule.get("item", ""))
-            chapters = []
-            base_uri = toc_rule.get("baseUri", resp.url)
-            if not base_uri:
-                base_uri = resp.url
-            
-            for item in items:
-                title = item.get_text(strip=True)
-                link = item.get("href")
-                if link:
-                    full_link = urllib.parse.urljoin(base_uri, link)
-                    chapters.append({"title": title, "url": full_link})
-                    
-            if toc_rule.get("isDesc", False):
-                chapters.reverse()
+        chapters = []
+        current_url = book_url
+        visited = set()
+
+        while current_url and current_url not in visited:
+            visited.add(current_url)
+            try:
+                resp = requests.get(current_url, headers=self.headers, timeout=10)
+                if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
+                    resp.encoding = resp.apparent_encoding
                 
-            return chapters
-        except Exception as e:
-            return []
+                tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
+                base_uri = toc_rule.get("baseUri", resp.url)
+                if not base_uri:
+                    base_uri = resp.url
+                
+                items = self._select_elements(tree, toc_rule.get("item", ""))
+                
+                for item in items:
+                    if hasattr(item, 'text_content'):
+                        title = item.text_content().strip()
+                        link = item.get("href", "")
+                        if link:
+                            full_link = urllib.parse.urljoin(base_uri, link)
+                            chapters.append({"title": title, "url": full_link})
+                
+                # 翻页
+                next_page_rule = toc_rule.get("nextPage", "")
+                if next_page_rule:
+                    next_url = self._extract_text(tree, next_page_rule, resp.url)
+                    if next_url and next_url != current_url and next_url.startswith("http"):
+                        current_url = next_url
+                        continue
+                break
+            except Exception as e:
+                break
+                
+        if toc_rule.get("isDesc", False):
+            chapters.reverse()
+            
+        return chapters
 
     def download_chapter(self, chapter_url: str, rule: dict) -> str:
         chap_rule = rule.get("chapter", {})
-        try:
-            resp = requests.get(chapter_url, headers=self.headers, timeout=10)
-            if resp.encoding == 'ISO-8859-1':
-                resp.encoding = resp.apparent_encoding
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # 过滤标签
-            filter_tags = [t.strip() for t in chap_rule.get("filterTag", "").split(',') if t.strip()]
-            for tag in filter_tags:
-                for match in soup.find_all(tag):
-                    match.decompose()
-            
-            content_node = soup.select_one(chap_rule.get("content", ""))
-            if not content_node:
-                return "章节内容为空或解析失败。"
+        content_parts = []
+        current_url = chapter_url
+        visited = set()
+
+        while current_url and current_url not in visited:
+            visited.add(current_url)
+            try:
+                resp = requests.get(current_url, headers=self.headers, timeout=10)
+                if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
+                    resp.encoding = resp.apparent_encoding
                 
-            text = content_node.get_text(separator="\n")
-            
-            # 过滤正则文本
-            filter_txt = chap_rule.get("filterTxt", "")
-            if filter_txt:
-                text = re.sub(filter_txt, '', text)
+                # 若需要对整个响应体使用 @js 处理 (少见但可能)
+                raw_html = resp.text
+
+                tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
                 
-            return "\n".join([line.strip() for line in text.splitlines() if line.strip()])
-        except Exception as e:
-            return f"下载章节异常: {e}"
+                # 过滤标签
+                filter_tags = [t.strip() for t in chap_rule.get("filterTag", "").split(',') if t.strip()]
+                for tag in filter_tags:
+                    for match in self._select_elements(tree, tag):
+                        match.drop_tree()
+                
+                content_rule = chap_rule.get("content", "")
+                js_code = ""
+                if '@js:' in content_rule:
+                    content_rule, js_code = content_rule.split('@js:', 1)
+
+                content_nodes = self._select_elements(tree, content_rule)
+                if not content_nodes:
+                    break
+                    
+                node = content_nodes[0]
+                
+                # 处理内容：SoNovel 支持将 <br> 和段落标签转为 \n
+                # lxml 会保留所有文字
+                if js_code:
+                    raw_inner_html = html.tostring(node, encoding='unicode', method='html')
+                    processed_html = self._apply_js(raw_inner_html, js_code)
+                    node = html.fromstring(processed_html)
+                
+                # 获取纯文本，替换 <br> 为 \n
+                for br in node.xpath(".//br"):
+                    br.tail = "\n" + (br.tail or "")
+                for p in node.xpath(".//p"):
+                    p.tail = "\n" + (p.tail or "")
+                    
+                text = node.text_content()
+                
+                # 过滤正则文本
+                filter_txt = chap_rule.get("filterTxt", "")
+                if filter_txt:
+                    text = re.sub(filter_txt, '', text)
+                    
+                content_parts.append("\n".join([line.strip() for line in text.splitlines() if line.strip()]))
+                
+                # 章节分页
+                next_page_rule = chap_rule.get("nextPage", "")
+                if next_page_rule:
+                    next_url = self._extract_text(tree, next_page_rule, resp.url)
+                    if next_url and next_url != current_url and next_url.startswith("http"):
+                        current_url = next_url
+                        continue
+                break
+            except Exception as e:
+                return f"下载章节异常: {e}"
+                
+        return "\n".join(content_parts)

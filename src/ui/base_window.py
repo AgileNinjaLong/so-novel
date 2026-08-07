@@ -332,8 +332,12 @@ class BaseStealthWindow(QWidget):
         self.update_opacity_by_hover()
 
     def contextMenuEvent(self, event):
+        from PyQt6.QtWidgets import QApplication
+        from src.ui.download_dialog import DownloadDialog
+
         menu = QMenu(self)
-        open_action = menu.addAction("📂 打开电子书 (TXT/EPUB/PDF)")
+        open_action = menu.addAction("📂 打开本地电子书 (TXT/EPUB/PDF)")
+        download_action = menu.addAction("🌐 搜索/下载网络小说 (SoNovel)")
         
         chap_action = None
         if self.book and self.book.chapters:
@@ -355,6 +359,13 @@ class BaseStealthWindow(QWidget):
             self.is_dialog_open = False
             if file_path:
                 self.load_file(file_path)
+        elif action == download_action:
+            self.is_dialog_open = True
+            self.setWindowOpacity(self.active_opacity)
+            dialog = DownloadDialog(self)
+            dialog.exec()
+            self.is_dialog_open = False
+            self.update_opacity_by_hover()
         elif chap_action and action == chap_action:
             QTimer.singleShot(10, self.open_chapter_dialog)
         elif action == settings_action:
@@ -366,7 +377,7 @@ class BaseStealthWindow(QWidget):
             self.is_dialog_open = False
             self.update_opacity_by_hover()
         elif action == quit_action:
-            self.close()
+            QApplication.instance().quit()
 
     def toggle_boss_key(self):
         if self.isVisible():
