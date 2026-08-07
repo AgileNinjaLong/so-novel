@@ -40,13 +40,10 @@ class NovelReadApp:
             view.file_loaded_signal.connect(lambda path, v=view: self.sync_file(path, v))
             view.settings_changed_signal.connect(self.reload_shortcuts)
 
-        # 局部模式快捷键对象容器
+        # 启动全局老板键服务与快捷键绑定
+        self.boss_mgr = None
         self.shortcuts = []
         self.reload_shortcuts()
-
-        # 启动全局老板键服务
-        self.boss_mgr = None
-        self.reload_boss_key()
 
         # 程序退出前强制持久化保存
         self.app.aboutToQuit.connect(self.config_mgr.save_immediately)
