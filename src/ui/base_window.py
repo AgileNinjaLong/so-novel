@@ -2,7 +2,7 @@ import os
 import sys
 from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal, QRect
 from PyQt6.QtWidgets import QWidget, QMenu, QFileDialog, QDialog
-from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QMouseEvent, QCursor, QWheelEvent
+from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QMouseEvent, QCursor, QWheelEvent, QShortcut, QKeySequence
 
 from src.core.parser import NovelParser
 from src.core.book import Book
@@ -33,7 +33,55 @@ class BaseStealthWindow(QWidget):
         self.active_opacity = self.config_mgr.settings.get("opacity", 0.85)
         self.idle_opacity = self.config_mgr.settings.get("idle_opacity", 0.20)
 
+        self.reading_shortcuts = []
+
         self.setup_window_flags()
+        self.reload_reading_shortcuts()
+
+    def reload_reading_shortcuts(self):
+        for sc in self.reading_shortcuts:
+            sc.setEnabled(False)
+            sc.deleteLater()
+        self.reading_shortcuts.clear()
+
+        # 读取自定义阅读控制快捷键
+        hk_next_line = self.config_mgr.settings.get("hk_next_line", "Down")
+        hk_prev_line = self.config_mgr.settings.get("hk_prev_line", "Up")
+        hk_next_chap = self.config_mgr.settings.get("hk_next_chap", "PageDown")
+        hk_prev_chap = self.config_mgr.settings.get("hk_prev_chap", "PageUp")
+
+        if hk_next_line:
+            sc = QShortcut(QKeySequence(hk_next_line), self)
+            sc.activated.connect(self.next_line)
+            self.reading_shortcuts.append(sc)
+        
+        if hk_prev_line:
+            sc = QShortcut(QKeySequence(hk_prev_line), self)
+            sc.activated.connect(self.prev_line)
+            self.reading_shortcuts.append(sc)
+
+        if hk_next_chap:
+            sc = QShortcut(QKeySequence(hk_next_chap), self)
+            sc.activated.connect(self._jump_next_chap)
+            self.reading_shortcuts.append(sc)
+        
+        if hk_prev_chap:
+            sc = QShortcut(QKeySequence(hk_prev_chap), self)
+            sc.activated.connect(self._jump_prev_chap)
+            self.reading_shortcuts.append(sc)
+
+        # 绑定固定功能
+        sc_esc = QShortcut(QKeySequence("Esc"), self)
+        sc_esc.activated.connect(self.toggle_boss_key)
+        self.reading_shortcuts.append(sc_esc)
+
+    def _jump_next_chap(self):
+        if self.book and self.book.next_chapter():
+            self.update_content()
+            
+    def _jump_prev_chap(self):
+        if self.book and self.book.prev_chapter():
+            self.update_content()
 
     def setup_window_flags(self):
         self.setWindowFlags(

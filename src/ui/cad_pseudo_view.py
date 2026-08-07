@@ -38,50 +38,30 @@ class CADPseudoView(BaseStealthWindow):
         return max(20, available_width // char_width)
 
     def init_ui(self):
-        self.resize(800, 260)
+        self.resize(800, 160)
         layout = QVBoxLayout()
         layout.setSpacing(0)
         layout.setContentsMargins(2, 2, 2, 2)
 
-        # 模拟 AutoCAD 的背景画布
-        self.canvas = QFrame()
-        self.canvas.setStyleSheet("""
-            QFrame {
-                background-color: #212830;
-                border: 1px solid #333333;
-                border-bottom: none;
-            }
-        """)
-        # 简单在画布上加一些虚构的坐标轴或提示线
-        canvas_layout = QVBoxLayout()
-        canvas_label = QLabel("AutoCAD 2026 - [Drawing1.dwg]")
-        canvas_label.setStyleSheet("color: #4B5A69; font-size: 14px; padding: 10px;")
-        canvas_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        canvas_layout.addWidget(canvas_label)
-        canvas_layout.addStretch()
-        self.canvas.setLayout(canvas_layout)
-        
-        layout.addWidget(self.canvas, stretch=1)
-
-        # 模拟 AutoCAD 底部的命令行
+        # 纯黑 AutoCAD 命令行模式
         self.editor = CADCommandLineEdit(parent_view=self)
         self.editor.setReadOnly(True)
         self.editor.setFont(QFont("Consolas", 10))
         self.editor.setAcceptDrops(False)
         self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-        self.editor.setFixedHeight(110)
         
+        # 背景全黑，文字亮灰
         self.editor.setStyleSheet("""
             QTextEdit {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: 1px solid #999999;
+                background-color: #000000;
+                color: #D4D4D4;
+                border: 1px solid #333333;
                 font-family: 'Consolas', 'Courier New', monospace;
                 padding: 4px;
             }
         """)
 
-        layout.addWidget(self.editor, stretch=0)
+        layout.addWidget(self.editor)
         self.setLayout(layout)
         
         sample_log = [
@@ -91,6 +71,15 @@ class CADPseudoView(BaseStealthWindow):
             "Command: [AutoCAD CAD Mode Active - Right click to open file]",
         ]
         self.editor.setText("\n".join(sample_log))
+
+    def get_visible_lines_count(self) -> int:
+        from PyQt6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.editor.font())
+        line_height = fm.lineSpacing()
+        if line_height == 0:
+            line_height = 20
+        available_height = self.editor.viewport().height()
+        return max(5, available_height // line_height)
 
     def render_view(self, error_msg: str = None):
         if error_msg:
@@ -109,8 +98,10 @@ class CADPseudoView(BaseStealthWindow):
             f"Command: [Layer: {chap.title}]",
         ]
 
-        start_idx = max(0, self.book.current_line_idx - 2)
-        end_idx = min(len(self.lines), start_idx + 6)
+        visible_lines = max(5, self.get_visible_lines_count() - 5)
+        half_visible = visible_lines // 2
+        start_idx = max(0, self.book.current_line_idx - half_visible)
+        end_idx = min(len(self.lines), start_idx + visible_lines)
 
         for i in range(start_idx, end_idx):
             if i == self.book.current_line_idx:

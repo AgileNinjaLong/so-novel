@@ -10,6 +10,10 @@ DEFAULT_SETTINGS = {
     "hk_floating": "Ctrl+1",
     "hk_ide": "Ctrl+2",
     "hk_cad": "Ctrl+3",
+    "hk_next_line": "Down",
+    "hk_prev_line": "Up",
+    "hk_next_chap": "PageDown",
+    "hk_prev_chap": "PageUp",
     "opacity": 0.85,
     "idle_opacity": 0.15,
     "mode": "floating",  # 'floating' 或 'ide_pseudo'
