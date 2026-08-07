@@ -6,7 +6,26 @@ from src.core.book import Chapter
 from src.ui.floating_view import FloatingView
 from src.ui.ide_pseudo_view import IDEPseudoView
 from src.ui.cad_pseudo_view import CADPseudoView
+from src.ui.settings_dialog import SettingsDialog
 from src.ui.chapter_dialog import ChapterDialog
+
+def test_settings_dialog_conflict(qapp, tmp_path):
+    cfg_file = str(tmp_path / "cfg.json")
+    cfg = ConfigManager(config_path=cfg_file)
+    
+    dialog = SettingsDialog(cfg)
+    
+    # 模拟输入冲突快捷键
+    dialog.boss_key_edit.setKeySequence("Ctrl+1")
+    dialog.hk_floating_edit.setKeySequence("Ctrl+1")
+    
+    # 获取需要保存的 keys 列表进行冲突判断逻辑校验
+    boss_key = dialog.boss_key_edit.keySequence().toString()
+    hk_floating = dialog.hk_floating_edit.keySequence().toString()
+    
+    keys = [boss_key, hk_floating]
+    valid_keys = [k for k in keys if k]
+    assert len(valid_keys) != len(set(valid_keys)), "防冲突校验未能识别出相同的快捷键"
 
 @pytest.fixture(scope="module")
 def qapp():

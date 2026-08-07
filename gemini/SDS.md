@@ -67,6 +67,10 @@
 
 ## 3. 核心模块详细设计
 
+### 3.0 解析层与视图层的绝对解耦验证 (Decoupling Verification)
+> **架构声明**：当前的架构已完成绝对解耦。底层引擎 `NovelParser` 返回标准化的 `Book` 与 `Chapter` 数据模型；中层调度由 `ConfigManager` 控制进度。
+> 无论未来新增多少种伪装模式（如已新增的 `CADPseudoView` 或未来的 Excel/Web 伪装），都**完全不需要**修改或引用中间解析器代码。各个新模式只需继承 `BaseStealthWindow`，实现各自的 `render_view()` 方法即可将文本展示到界面，严格符合开闭原则（OCP）。
+
 ### 3.1 数据解析与模型层 (Parser Engine)
 
 统一抽取基础数据模型 `Book` 与 `Chapter`：
@@ -102,15 +106,12 @@ class Book:
     *   窗口标志：`Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool`（不在任务栏显示大图标）。
     *   半透明效果：`self.setWindowOpacity(alpha)` (支持 0.1~1.0 调节)。
     *   鼠标无缝划过变暗/透明度降至最隐秘状态。
-2.  **IDE / 伪装控制模式**：
-    *   渲染模板库：内置 VS Code 终端控制台样式、Python 伪代码样式。
-    *   小说文字被自动注入为代码注释，例如：
-        ```python
-        # [DEBUG 10:24:05] process_data: 萧炎看着眼前的斗气大陆，心中泛起阵阵涟漪...
-        ```
-3.  **全局老板键模块 (`BossKeyManager`)**：
-    *   注册系统级别快捷键（如 `Alt + Z` 或 `Esc`）。
-    *   触发事件：立刻调用 `window.hide()`，并暂停计时器；再次触发调用 `window.show()`。
+2.  **IDE / CAD 伪装控制模式**：
+    *   渲染模板库：内置 VS Code 终端控制台样式、AutoCAD 命令栏样式等。
+3.  **快捷键路由中心 (`HotkeyManager` & `SettingsDialog`)**：
+    *   移除固定硬编码，采用 `QShortcut` 实现每个摸鱼模式（如极简窗、IDE、CAD）专属局部快捷键映射。
+    *   老板键通过 Win32 `RegisterHotKey` 实现原生免干扰监听。
+    *   提供独立图形化界面 `SettingsDialog`，包含按键捕获控件（KeySequenceEdit）及实时防冲突校验逻辑。
 
 ### 3.3 状态与进度持久化 (Storage Module)
 

@@ -2,6 +2,7 @@ import sys
 import os
 import traceback
 from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtGui import QShortcut, QKeySequence
 from src.core.config import ConfigManager
 from src.ui.floating_view import FloatingView
 from src.ui.ide_pseudo_view import IDEPseudoView
@@ -35,23 +36,58 @@ class NovelReadApp:
             self.active_window = self.floating_view
 
         # 信号绑定
-        self.floating_view.switch_mode_signal.connect(self.switch_view_mode)
-        self.ide_view.switch_mode_signal.connect(self.switch_view_mode)
-        self.cad_view.switch_mode_signal.connect(self.switch_view_mode)
+        for view in [self.floating_view, self.ide_view, self.cad_view]:
+            view.file_loaded_signal.connect(lambda path, v=view: self.sync_file(path, v))
+            view.settings_changed_signal.connect(self.reload_shortcuts)
 
-        # 文件同步绑定
-        self.floating_view.file_loaded_signal.connect(lambda path: self.sync_file(path, self.floating_view))
-        self.ide_view.file_loaded_signal.connect(lambda path: self.sync_file(path, self.ide_view))
-        self.cad_view.file_loaded_signal.connect(lambda path: self.sync_file(path, self.cad_view))
+        # 局部模式快捷键对象容器
+        self.shortcuts = []
+        self.reload_shortcuts()
 
         # 启动全局老板键服务
+        self.boss_mgr = None
+        self.reload_boss_key()
+
+        # 程序退出前强制持久化保存
+        self.app.aboutToQuit.connect(self.config_mgr.save_immediately)
+
+    def reload_boss_key(self):
+        if self.boss_mgr:
+            self.boss_mgr.stop()
         boss_key_str = self.config_mgr.settings.get("boss_key", "Alt+Z")
         self.boss_mgr = BossKeyManager(boss_key_str)
         self.boss_mgr.triggered.connect(self.on_boss_key_triggered)
         self.boss_mgr.start()
 
-        # 程序退出前强制持久化保存
-        self.app.aboutToQuit.connect(self.config_mgr.save_immediately)
+    def reload_shortcuts(self):
+        # 清除旧快捷键
+        for sc in self.shortcuts:
+            sc.setEnabled(False)
+            sc.deleteLater()
+        self.shortcuts.clear()
+
+        # 重新绑定老板键（部分情况下老板键改动需要重新注册Win32事件）
+        self.reload_boss_key()
+
+        # 为每个窗口独立注册应用内快捷键
+        for view in [self.floating_view, self.ide_view, self.cad_view]:
+            hk_floating = self.config_mgr.settings.get("hk_floating", "Ctrl+1")
+            if hk_floating:
+                sc1 = QShortcut(QKeySequence(hk_floating), view)
+                sc1.activated.connect(lambda: self.switch_to_mode("floating"))
+                self.shortcuts.append(sc1)
+
+            hk_ide = self.config_mgr.settings.get("hk_ide", "Ctrl+2")
+            if hk_ide:
+                sc2 = QShortcut(QKeySequence(hk_ide), view)
+                sc2.activated.connect(lambda: self.switch_to_mode("ide_pseudo"))
+                self.shortcuts.append(sc2)
+
+            hk_cad = self.config_mgr.settings.get("hk_cad", "Ctrl+3")
+            if hk_cad:
+                sc3 = QShortcut(QKeySequence(hk_cad), view)
+                sc3.activated.connect(lambda: self.switch_to_mode("cad_pseudo"))
+                self.shortcuts.append(sc3)
 
     def sync_file(self, file_path: str, source_view):
         if source_view != self.floating_view:
@@ -62,7 +98,6 @@ class NovelReadApp:
             self.cad_view.load_file(file_path, notify=False)
 
     def show(self):
-        # 自动加载上一次的小说（若存在）
         last_file = self.config_mgr.get_last_file()
         if last_file:
             self.floating_view.load_file(last_file, notify=False)
@@ -70,19 +105,21 @@ class NovelReadApp:
             self.cad_view.load_file(last_file, notify=False)
         self.active_window.show()
 
-    def switch_view_mode(self):
+    def switch_to_mode(self, target_mode: str):
+        if self.current_mode == target_mode:
+            return
+            
         pos = self.active_window.pos()
         book = self.active_window.book
 
         self.active_window.hide()
-        if self.current_mode == "floating":
-            self.current_mode = "ide_pseudo"
+        self.current_mode = target_mode
+        
+        if self.current_mode == "ide_pseudo":
             self.active_window = self.ide_view
-        elif self.current_mode == "ide_pseudo":
-            self.current_mode = "cad_pseudo"
+        elif self.current_mode == "cad_pseudo":
             self.active_window = self.cad_view
         else:
-            self.current_mode = "floating"
             self.active_window = self.floating_view
 
         self.config_mgr.settings["mode"] = self.current_mode

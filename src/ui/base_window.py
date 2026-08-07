@@ -6,10 +6,12 @@ from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, 
 from src.core.parser import NovelParser
 from src.core.book import Book
 from src.ui.chapter_dialog import ChapterDialog
+from src.ui.settings_dialog import SettingsDialog
 
 class BaseStealthWindow(QWidget):
     switch_mode_signal = pyqtSignal()
     file_loaded_signal = pyqtSignal(str)
+    settings_changed_signal = pyqtSignal()
 
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
@@ -193,8 +195,6 @@ class BaseStealthWindow(QWidget):
                 self.update_content()
         elif key == Qt.Key.Key_Escape:
             self.toggle_boss_key()
-        elif key == Qt.Key.Key_F12:
-            self.switch_mode_signal.emit()
         else:
             super().keyPressEvent(event)
 
@@ -213,7 +213,6 @@ class BaseStealthWindow(QWidget):
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         open_action = menu.addAction("📂 打开电子书 (TXT/EPUB/PDF)")
-        switch_action = menu.addAction("🔄 切换摸鱼模式 (F12)")
         
         chap_action = None
         if self.book and self.book.chapters:
@@ -221,7 +220,8 @@ class BaseStealthWindow(QWidget):
             chap_action = menu.addAction(f"📖 章节目录 (共 {len(self.book.chapters)} 章)")
                 
         menu.addSeparator()
-        boss_info = menu.addAction(f"🛡️ 老板键: {self.config_mgr.settings.get('boss_key', 'Alt+Z')}")
+        settings_action = menu.addAction("⚙️ 快捷键绑定设置")
+        boss_info = menu.addAction(f"🛡️ 隐身键: {self.config_mgr.settings.get('boss_key', 'Alt+Z')}")
         boss_info.setEnabled(False)
         quit_action = menu.addAction("❌ 退出软件")
 
@@ -234,10 +234,16 @@ class BaseStealthWindow(QWidget):
             self.is_dialog_open = False
             if file_path:
                 self.load_file(file_path)
-        elif action == switch_action:
-            self.switch_mode_signal.emit()
         elif chap_action and action == chap_action:
             QTimer.singleShot(10, self.open_chapter_dialog)
+        elif action == settings_action:
+            self.is_dialog_open = True
+            self.setWindowOpacity(self.active_opacity)
+            dialog = SettingsDialog(self.config_mgr, self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.settings_changed_signal.emit()
+            self.is_dialog_open = False
+            self.update_opacity_by_hover()
         elif action == quit_action:
             self.close()
 

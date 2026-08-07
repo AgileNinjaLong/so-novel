@@ -7,6 +7,9 @@ DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".novelread", "confi
 
 DEFAULT_SETTINGS = {
     "boss_key": "Alt+Z",
+    "hk_floating": "Ctrl+1",
+    "hk_ide": "Ctrl+2",
+    "hk_cad": "Ctrl+3",
     "opacity": 0.85,
     "idle_opacity": 0.15,
     "mode": "floating",  # 'floating' 或 'ide_pseudo'
