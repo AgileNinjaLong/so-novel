@@ -33,7 +33,22 @@ class IDEPseudoView(BaseStealthWindow):
         self.init_ui()
 
     def get_line_length(self) -> int:
-        return 60
+        from PyQt6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.editor.font())
+        char_width = fm.horizontalAdvance("中")
+        if char_width == 0:
+            char_width = 12
+        available_width = self.editor.viewport().width() - 20
+        return max(20, available_width // char_width)
+
+    def get_visible_lines_count(self) -> int:
+        from PyQt6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.editor.font())
+        line_height = fm.lineSpacing()
+        if line_height == 0:
+            line_height = 20
+        available_height = self.editor.viewport().height()
+        return max(5, available_height // line_height)
 
     def init_ui(self):
         self.resize(720, 240)
@@ -84,8 +99,10 @@ class IDEPseudoView(BaseStealthWindow):
             "--------------------------------------------------------------------------------"
         ]
 
-        start_idx = max(0, self.book.current_line_idx - 5)
-        end_idx = min(len(self.lines), start_idx + 15)
+        visible_lines = max(5, self.get_visible_lines_count() - 4)  # 留出 4 行作为伪装日志的头尾
+        half_visible = visible_lines // 2
+        start_idx = max(0, self.book.current_line_idx - half_visible)
+        end_idx = min(len(self.lines), start_idx + visible_lines)
 
         for i in range(start_idx, end_idx):
             prefix = f"# [DEBUG {datetime.datetime.now().strftime('%H:%M:%S')}] " if i != self.book.current_line_idx else ">>> # [FOCUS] "

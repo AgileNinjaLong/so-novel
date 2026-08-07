@@ -34,6 +34,15 @@ class FloatingView(BaseStealthWindow):
         layout.addWidget(self.label)
         self.setLayout(layout)
 
+    def get_line_length(self) -> int:
+        from PyQt6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.font())
+        char_width = fm.horizontalAdvance("中")
+        if char_width == 0:
+            char_width = 12
+        available_width = self.width() - 40
+        return max(10, available_width // char_width)
+
     def render_view(self, error_msg: str = None):
         if error_msg:
             self.label.setText(error_msg)

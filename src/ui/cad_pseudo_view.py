@@ -29,7 +29,13 @@ class CADPseudoView(BaseStealthWindow):
         self.init_ui()
 
     def get_line_length(self) -> int:
-        return 65
+        from PyQt6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.editor.font())
+        char_width = fm.horizontalAdvance("中")
+        if char_width == 0:
+            char_width = 12
+        available_width = self.editor.viewport().width() - 20
+        return max(20, available_width // char_width)
 
     def init_ui(self):
         self.resize(800, 260)

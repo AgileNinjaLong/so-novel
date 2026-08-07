@@ -1,5 +1,6 @@
 import os
-from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
+import sys
+from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal, QRect
 from PyQt6.QtWidgets import QWidget, QMenu, QFileDialog, QDialog
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QMouseEvent, QCursor, QWheelEvent
 
@@ -23,6 +24,12 @@ class BaseStealthWindow(QWidget):
         self.book: Book = None
         self.lines = []
         
+        self.border_width = 8
+        self.resizing = False
+        self.drag_edge = 0
+        self.drag_start_geometry = QRect()
+        self.drag_start_pos = QPoint()
+        
         self.active_opacity = self.config_mgr.settings.get("opacity", 0.85)
         self.idle_opacity = self.config_mgr.settings.get("idle_opacity", 0.20)
 
@@ -36,11 +43,21 @@ class BaseStealthWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAcceptDrops(True)
+        self.setMouseTracking(True)  # 开启鼠标追踪以更新边缘光标
         self.setWindowOpacity(self.active_opacity)
 
+    def resizeEvent(self, event):
+        """窗口改变大小时触发自适应重排"""
+        super().resizeEvent(event)
+        self.update_content()
+
     def get_line_length(self) -> int:
-        """子类可重写，返回该模式下默认的单行字数"""
+        """子类可重写，返回该模式下基于当前窗口宽度的单行最大字数"""
         return self.config_mgr.settings.get("line_length", 35)
+
+    def get_visible_lines_count(self) -> int:
+        """子类可重写，返回该模式下基于当前窗口高度的最大可见行数"""
+        return 1
 
     def render_view(self, error_msg: str = None):
         """抽象方法，子类必须实现。用于将 self.book, self.lines 和进度更新到 UI"""
@@ -65,14 +82,69 @@ class BaseStealthWindow(QWidget):
             self.setWindowOpacity(self.idle_opacity)
         super().leaveEvent(event)
 
+    def get_resize_edge(self, pos: QPoint) -> int:
+        x, y = pos.x(), pos.y()
+        w, h = self.width(), self.height()
+        b = self.border_width
+        edge = 0
+        if x <= b: edge |= Qt.Edge.LeftEdge.value
+        if x >= w - b: edge |= Qt.Edge.RightEdge.value
+        if y <= b: edge |= Qt.Edge.TopEdge.value
+        if y >= h - b: edge |= Qt.Edge.BottomEdge.value
+        return edge
+
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self.drag_edge = self.get_resize_edge(event.pos())
+            if self.drag_edge != 0:
+                self.resizing = True
+                self.drag_start_geometry = self.geometry()
+                self.drag_start_pos = event.globalPosition().toPoint()
+            else:
+                self.resizing = False
+                self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.resizing = False
+            super().mouseReleaseEvent(event)
+
     def mouseMoveEvent(self, event: QMouseEvent):
+        # 1. 无按键悬停时，更新边缘缩放光标
+        if not event.buttons():
+            edge = self.get_resize_edge(event.pos())
+            if edge in (Qt.Edge.TopEdge.value | Qt.Edge.LeftEdge.value, Qt.Edge.BottomEdge.value | Qt.Edge.RightEdge.value):
+                self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            elif edge in (Qt.Edge.TopEdge.value | Qt.Edge.RightEdge.value, Qt.Edge.BottomEdge.value | Qt.Edge.LeftEdge.value):
+                self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+            elif edge in (Qt.Edge.LeftEdge.value, Qt.Edge.RightEdge.value):
+                self.setCursor(Qt.CursorShape.SizeHorCursor)
+            elif edge in (Qt.Edge.TopEdge.value, Qt.Edge.BottomEdge.value):
+                self.setCursor(Qt.CursorShape.SizeVerCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            return
+
+        # 2. 按住左键拖拽时
         if event.buttons() == Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self.drag_position)
+            if getattr(self, 'resizing', False):
+                delta = event.globalPosition().toPoint() - self.drag_start_pos
+                g = self.drag_start_geometry
+                new_rect = QRect(g)
+                
+                if self.drag_edge & Qt.Edge.LeftEdge.value:
+                    new_rect.setLeft(min(g.left() + delta.x(), g.right() - 200))
+                if self.drag_edge & Qt.Edge.RightEdge.value:
+                    new_rect.setRight(max(g.right() + delta.x(), g.left() + 200))
+                if self.drag_edge & Qt.Edge.TopEdge.value:
+                    new_rect.setTop(min(g.top() + delta.y(), g.bottom() - 36))
+                if self.drag_edge & Qt.Edge.BottomEdge.value:
+                    new_rect.setBottom(max(g.bottom() + delta.y(), g.top() + 36))
+                    
+                self.setGeometry(new_rect)
+            else:
+                self.move(event.globalPosition().toPoint() - self.drag_position)
             event.accept()
 
     def dragEnterEvent(self, event: QDragEnterEvent):
