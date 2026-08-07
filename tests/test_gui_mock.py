@@ -5,6 +5,7 @@ from src.core.config import ConfigManager
 from src.core.book import Chapter
 from src.ui.floating_view import FloatingView
 from src.ui.ide_pseudo_view import IDEPseudoView
+from src.ui.cad_pseudo_view import CADPseudoView
 from src.ui.chapter_dialog import ChapterDialog
 
 @pytest.fixture(scope="module")
@@ -39,6 +40,16 @@ def test_ide_pseudo_view_toggle(qapp, tmp_path):
     assert ide_view.isVisible() is True
     ide_view.toggle_boss_key()
     assert ide_view.isVisible() is False
+
+def test_cad_pseudo_view_toggle(qapp, tmp_path):
+    cfg_file = str(tmp_path / "cfg.json")
+    cfg = ConfigManager(config_path=cfg_file)
+    cad_view = CADPseudoView(cfg)
+
+    cad_view.show()
+    assert cad_view.isVisible() is True
+    cad_view.toggle_boss_key()
+    assert cad_view.isVisible() is False
 
 def test_chapter_dialog(qapp):
     chapters = [Chapter(title=f"第{i}章", content="测试") for i in range(1, 50)]
