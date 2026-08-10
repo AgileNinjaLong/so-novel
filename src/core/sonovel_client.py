@@ -179,7 +179,20 @@ class SoNovelClient:
     def get_toc(self, book_url: str, rule: dict) -> List[Dict[str, str]]:
         toc_rule = rule.get("toc", {})
         chapters = []
-        current_url = book_url
+        
+        toc_url = toc_rule.get("url", "")
+        if toc_url and '%s' in toc_url:
+            # 从路径中提取最后一个连续数字作为小说 ID (兼容诸如笔趣阁365等站点的特殊目录结构)
+            path = urllib.parse.urlparse(book_url).path
+            m = re.findall(r'\d+', path)
+            if m:
+                toc_url = toc_url.replace('%s', m[-1])
+            else:
+                toc_url = book_url
+        else:
+            toc_url = book_url
+
+        current_url = toc_url
         visited = set()
 
         while current_url and current_url not in visited:
