@@ -47,15 +47,36 @@ class DownloadWorker(QThread):
                 return
 
             total = len(toc)
-            self.progress_signal.emit(0, total, f"找到 {total} 章，开始下载...")
+            self.progress_signal.emit(0, total, f"找到 {total} 章，准备极速下载...")
 
             os.makedirs(os.path.dirname(os.path.abspath(self.save_path)), exist_ok=True)
 
+            import concurrent.futures
+            chapter_contents = [None] * total
+            completed = 0
+
+            def _download_task(i, chap):
+                try:
+                    return i, self.client.download_chapter(chap["url"], rule)
+                except Exception as e:
+                    return i, f"下载失败: {e}"
+
+            # 使用高并发加快下载速度
+            with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+                futures = {executor.submit(_download_task, i, chap): i for i, chap in enumerate(toc)}
+                for future in concurrent.futures.as_completed(futures):
+                    i, content = future.result()
+                    chapter_contents[i] = content
+                    completed += 1
+                    
+                    if completed % 10 == 0 or completed == total:
+                        self.progress_signal.emit(completed, total, f"极速下载中: {completed}/{total} 章")
+
+            self.progress_signal.emit(total, total, "下载完毕，正在合并保存...")
+
             with open(self.save_path, "w", encoding="utf-8") as f:
                 for idx, chap in enumerate(toc):
-                    self.progress_signal.emit(idx + 1, total, f"下载中: {chap['title']}")
-                    content = self.client.download_chapter(chap["url"], rule)
-                    f.write(f"\n\n{chap['title']}\n\n{content}\n")
+                    f.write(f"\n\n{chap['title']}\n\n{chapter_contents[idx]}\n")
 
             self.finished_signal.emit(self.save_path)
         except Exception as e:
