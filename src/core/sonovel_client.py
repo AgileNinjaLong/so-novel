@@ -5,8 +5,19 @@ import urllib.parse
 from typing import List, Dict, Any, Optional
 import requests
 from lxml import html
+import threading
 
 RULES_PATH = os.path.join("SoNovel", "rules", "main.json")
+
+_js_lock = threading.Lock()
+_js_ctx = None
+
+def _get_js_ctx():
+    global _js_ctx
+    if _js_ctx is None:
+        from py_mini_racer import MiniRacer
+        _js_ctx = MiniRacer()
+    return _js_ctx
 
 class SoNovelClient:
     def __init__(self, rules_path: str = RULES_PATH):
@@ -36,16 +47,16 @@ class SoNovelClient:
         if not js_code:
             return text
         try:
-            from py_mini_racer import MiniRacer
-            ctx = MiniRacer()
-            # 将当前提取的文本变量绑定到 js 的 r 变量中
-            ctx.eval(f"var r = {json.dumps(text)};")
-            
-            # 由于 SoNovel 的 js 是直接操作 r 变量，如 r=r.replace(...)
-            # 所以我们需要执行完该语句后，返回 r 的最终值
-            js_script = js_code + "\n r;"
-            result = ctx.eval(js_script)
-            return str(result)
+            with _js_lock:
+                ctx = _get_js_ctx()
+                # 将当前提取的文本变量绑定到 js 的 r 变量中
+                ctx.eval(f"var r = {json.dumps(text)};")
+                
+                # 由于 SoNovel 的 js 是直接操作 r 变量，如 r=r.replace(...)
+                # 所以我们需要执行完该语句后，返回 r 的最终值
+                js_script = js_code + "\n r;"
+                result = ctx.eval(js_script)
+                return str(result)
         except Exception as e:
             print(f"JS 执行异常: {e}\nCode: {js_code}")
             return text
@@ -96,62 +107,73 @@ class SoNovelClient:
 
         return text
 
-    def search(self, keyword: str) -> List[Dict[str, Any]]:
+    def _search_single_rule(self, rule: dict, keyword: str) -> List[Dict[str, Any]]:
         results = []
-        for rule in self.rules:
-            if rule.get("disabled", False):
-                continue
-            search_rule = rule.get("search")
-            if not search_rule or search_rule.get("disabled", False):
-                continue
+        if rule.get("disabled", False):
+            return results
+        search_rule = rule.get("search")
+        if not search_rule or search_rule.get("disabled", False):
+            return results
 
-            url = search_rule.get("url", "").replace('%s', urllib.parse.quote(keyword))
-            method = search_rule.get("method", "get").lower()
-            data_str = search_rule.get("data", "")
-            data = self._parse_dict_string(data_str, keyword)
+        url = search_rule.get("url", "").replace('%s', urllib.parse.quote(keyword))
+        method = search_rule.get("method", "get").lower()
+        data_str = search_rule.get("data", "")
+        data = self._parse_dict_string(data_str, keyword)
+        
+        cookies_str = search_rule.get("cookies", "")
+        cookies = {}
+        if cookies_str:
+            for pair in cookies_str.split(';'):
+                if '=' in pair:
+                    k, v = pair.split('=', 1)
+                    cookies[k.strip()] = v.strip()
+
+        try:
+            if method == "post":
+                resp = requests.post(url, data=data, headers=self.headers, cookies=cookies, timeout=10)
+            else:
+                resp = requests.get(url, params=data, headers=self.headers, cookies=cookies, timeout=10)
             
-            cookies_str = search_rule.get("cookies", "")
-            cookies = {}
-            if cookies_str:
-                for pair in cookies_str.split(';'):
-                    if '=' in pair:
-                        k, v = pair.split('=', 1)
-                        cookies[k.strip()] = v.strip()
+            if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
+                resp.encoding = resp.apparent_encoding
+            
+            tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
+            items = self._select_elements(tree, search_rule.get("result", ""))
+            
+            for item in items:
+                book_name = self._extract_text(item, search_rule.get("bookName"))
+                author = self._extract_text(item, search_rule.get("author"))
+                latest_chap = self._extract_text(item, search_rule.get("latestChapter"))
+                
+                book_url = self._extract_text(item, search_rule.get("bookName") + "@href", resp.url)
+                if not book_url and hasattr(item, 'get'):
+                    book_url = item.get("href", "")
+                
+                if book_name and book_url:
+                    results.append({
+                        "bookName": book_name,
+                        "author": author,
+                        "latestChapter": latest_chap,
+                        "url": book_url,
+                        "sourceName": rule.get("name"),
+                        "rule": rule
+                    })
+        except Exception:
+            pass
+        return results
 
-            try:
-                if method == "post":
-                    resp = requests.post(url, data=data, headers=self.headers, cookies=cookies, timeout=10)
-                else:
-                    resp = requests.get(url, params=data, headers=self.headers, cookies=cookies, timeout=10)
-                
-                if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
-                    resp.encoding = resp.apparent_encoding
-                
-                tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
-                items = self._select_elements(tree, search_rule.get("result", ""))
-                
-                for item in items:
-                    book_name = self._extract_text(item, search_rule.get("bookName"))
-                    author = self._extract_text(item, search_rule.get("author"))
-                    latest_chap = self._extract_text(item, search_rule.get("latestChapter"))
-                    
-                    book_url = self._extract_text(item, search_rule.get("bookName") + "@href", resp.url)
-                    if not book_url and hasattr(item, 'get'):
-                        book_url = item.get("href", "")
-                    
-                    if book_name and book_url:
-                        results.append({
-                            "bookName": book_name,
-                            "author": author,
-                            "latestChapter": latest_chap,
-                            "url": book_url,
-                            "sourceName": rule.get("name"),
-                            "rule": rule
-                        })
-            except Exception as e:
-                # 屏蔽超时异常
-                continue
-                
+    def search(self, keyword: str) -> List[Dict[str, Any]]:
+        import concurrent.futures
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+            futures = [executor.submit(self._search_single_rule, rule, keyword) for rule in self.rules]
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    res = future.result()
+                    if res:
+                        results.extend(res)
+                except Exception:
+                    pass
         return results
 
     def get_toc(self, book_url: str, rule: dict) -> List[Dict[str, str]]:
