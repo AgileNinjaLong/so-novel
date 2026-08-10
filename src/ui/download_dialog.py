@@ -1,13 +1,13 @@
 import os
 import sys
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QLabel, QFileDialog
 )
 from src.core.sonovel_client import SoNovelClient
 
-class SearchWorker(QThread):
+class SearchWorker(QObject):
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
@@ -16,6 +16,10 @@ class SearchWorker(QThread):
         self.client = client
         self.keyword = keyword
 
+    def start(self):
+        import threading
+        threading.Thread(target=self.run, daemon=True).start()
+
     def run(self):
         try:
             res = self.client.search(self.keyword)
@@ -23,7 +27,7 @@ class SearchWorker(QThread):
         except Exception as e:
             self.error_signal.emit(str(e))
 
-class DownloadWorker(QThread):
+class DownloadWorker(QObject):
     progress_signal = pyqtSignal(int, int, str)
     finished_signal = pyqtSignal(str)
     error_signal = pyqtSignal(str)
@@ -33,6 +37,10 @@ class DownloadWorker(QThread):
         self.client = client
         self.book_info = book_info
         self.save_path = save_path
+
+    def start(self):
+        import threading
+        threading.Thread(target=self.run, daemon=True).start()
 
     def run(self):
         try:
