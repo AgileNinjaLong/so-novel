@@ -48,6 +48,40 @@ class FloatingView(BaseStealthWindow):
         available_width = self.width() - 40
         return max(10, available_width // char_width)
 
+    def recalculate_lines(self, chap):
+        from PyQt6.QtGui import QTextLayout, QFontMetrics
+        fm = QFontMetrics(self.font())
+        
+        # 预留给标题和进度的空间
+        title_width = fm.horizontalAdvance(f"[{chap.title}]   (100%)")
+        available_width = self.width() - title_width - 30
+        if available_width < 50:
+            available_width = 50
+            
+        # 如果缓存有效，则直接返回
+        if hasattr(self, '_cached_chap_index') and self._cached_chap_index == chap.index and getattr(self, '_cached_width', 0) == available_width:
+            return
+            
+        lines = []
+        for paragraph in chap.content.splitlines():
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
+                
+            layout = QTextLayout(paragraph, self.font())
+            layout.beginLayout()
+            while True:
+                line = layout.createLine()
+                if not line.isValid():
+                    break
+                line.setLineWidth(available_width)
+                lines.append(paragraph[line.textStart():line.textStart() + line.textLength()])
+            layout.endLayout()
+            
+        self.lines = lines if lines else [""]
+        self._cached_chap_index = chap.index
+        self._cached_width = available_width
+
     def render_view(self, error_msg: str = None):
         if error_msg:
             self.label.setText(error_msg)
@@ -61,13 +95,6 @@ class FloatingView(BaseStealthWindow):
         total_chaps = self.book.total_chapters
         progress_pct = int(((self.book.current_chapter_idx + 1) / total_chaps) * 100) if total_chaps else 0
 
+        # 由于使用了 QTextLayout 像素级排版，这里不再需要使用 elidedText，因为已经精准适配了物理宽度
         text = f"[{chap.title}] {current_line_text}  ({progress_pct}%)"
-        
-        # 智能截断超长文本，保证无论如何都不撑破当前窗口宽度
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtGui import QFontMetrics
-        fm = QFontMetrics(self.font())
-        available_width = self.width() - 36
-        elided_text = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(50, available_width))
-        
-        self.label.setText(elided_text)
+        self.label.setText(text)

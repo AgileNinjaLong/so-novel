@@ -108,6 +108,10 @@ class BaseStealthWindow(QWidget):
         """子类可重写，返回该模式下基于当前窗口高度的最大可见行数"""
         return 1
 
+    def recalculate_lines(self, chap):
+        """默认基于字数切分，子类可覆盖为像素级排版"""
+        self.lines = chap.get_lines(line_length=self.get_line_length())
+
     def render_view(self, error_msg: str = None):
         """抽象方法，子类必须实现。用于将 self.book, self.lines 和进度更新到 UI"""
         raise NotImplementedError("Subclasses must implement render_view()")
@@ -252,7 +256,8 @@ class BaseStealthWindow(QWidget):
         if not chap:
             return
 
-        self.lines = chap.get_lines(line_length=self.get_line_length())
+        self.recalculate_lines(chap)
+        
         if self.book.current_line_idx >= len(self.lines) or self.book.current_line_idx < 0:
             self.book.current_line_idx = 0
 
