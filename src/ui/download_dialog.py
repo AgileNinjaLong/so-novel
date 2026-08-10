@@ -1,28 +1,43 @@
 import os
+import sys
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar
+    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QLabel, QFileDialog
 )
 from src.core.sonovel_client import SoNovelClient
+
+class SearchWorker(QThread):
+    finished_signal = pyqtSignal(list)
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, client: SoNovelClient, keyword: str):
+        super().__init__()
+        self.client = client
+        self.keyword = keyword
+
+    def run(self):
+        try:
+            res = self.client.search(self.keyword)
+            self.finished_signal.emit(res)
+        except Exception as e:
+            self.error_signal.emit(str(e))
 
 class DownloadWorker(QThread):
     progress_signal = pyqtSignal(int, int, str)
     finished_signal = pyqtSignal(str)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, client: SoNovelClient, book_info: dict, save_dir: str):
+    def __init__(self, client: SoNovelClient, book_info: dict, save_path: str):
         super().__init__()
         self.client = client
         self.book_info = book_info
-        self.save_dir = save_dir
+        self.save_path = save_path
 
     def run(self):
         try:
             rule = self.book_info["rule"]
             book_url = self.book_info["url"]
-            book_name = self.book_info["bookName"]
-            author = self.book_info["author"]
             
             # 1. 获取目录
             self.progress_signal.emit(0, 0, "正在获取目录...")
@@ -34,33 +49,29 @@ class DownloadWorker(QThread):
             total = len(toc)
             self.progress_signal.emit(0, total, f"找到 {total} 章，开始下载...")
 
-            os.makedirs(self.save_dir, exist_ok=True)
-            save_path = os.path.join(self.save_dir, f"{book_name}_{author}.txt")
+            os.makedirs(os.path.dirname(os.path.abspath(self.save_path)), exist_ok=True)
 
-            with open(save_path, "w", encoding="utf-8") as f:
+            with open(self.save_path, "w", encoding="utf-8") as f:
                 for idx, chap in enumerate(toc):
                     self.progress_signal.emit(idx + 1, total, f"下载中: {chap['title']}")
                     content = self.client.download_chapter(chap["url"], rule)
                     f.write(f"\n\n{chap['title']}\n\n{content}\n")
 
-            self.finished_signal.emit(save_path)
+            self.finished_signal.emit(self.save_path)
         except Exception as e:
             self.error_signal.emit(f"下载发生异常: {str(e)}")
 
 
 class DownloadDialog(QDialog):
-    populate_signal = pyqtSignal()
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.client = SoNovelClient()
         self.setWindowTitle("🔍 搜索与下载小说 (SoNovel)")
-        self.resize(750, 450)
+        self.resize(800, 500)
         
         # 使用原生窗口装饰，这里不采用极简无边框
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
-        self.populate_signal.connect(self._populate_table)
         self.init_ui()
 
     def init_ui(self):
@@ -115,31 +126,29 @@ class DownloadDialog(QDialog):
         self.table.setRowCount(0)
         self.results.clear()
         self.progress_label.setText("正在执行规则匹配与搜索，请稍候...")
-        QMessageBox.information(self, "搜索提示", "即将遍历规则库进行搜索，此过程可能需要几秒到十几秒不等。")
-
-        # 现实项目中建议放入 QThread，此处为精简展示主线程阻塞搜索
-        import threading
-        def _search_thread():
-            try:
-                res = self.client.search(keyword)
-                self.results = res
-                self.populate_signal.emit()
-            except Exception as e:
-                self.progress_label.setText(f"搜索出错: {e}")
-            finally:
-                self.search_btn.setEnabled(True)
-                self.search_btn.setText("搜索")
         
-        threading.Thread(target=_search_thread, daemon=True).start()
+        self.search_worker = SearchWorker(self.client, keyword)
+        self.search_worker.finished_signal.connect(self.on_search_finished)
+        self.search_worker.error_signal.connect(self.on_search_error)
+        self.search_worker.start()
 
-    def _populate_table(self):
+    def on_search_finished(self, results):
+        self.results = results
         self.table.setRowCount(len(self.results))
         for row, item in enumerate(self.results):
-            self.table.setItem(row, 0, QTableWidgetItem(item["bookName"]))
-            self.table.setItem(row, 1, QTableWidgetItem(item["author"]))
+            self.table.setItem(row, 0, QTableWidgetItem(item.get("bookName", "未知")))
+            self.table.setItem(row, 1, QTableWidgetItem(item.get("author", "未知")))
             self.table.setItem(row, 2, QTableWidgetItem(item.get("latestChapter", "")))
-            self.table.setItem(row, 3, QTableWidgetItem(item["sourceName"]))
+            self.table.setItem(row, 3, QTableWidgetItem(item.get("sourceName", "未知")))
+            
         self.progress_label.setText(f"搜索完成，共找到 {len(self.results)} 个结果。")
+        self.search_btn.setEnabled(True)
+        self.search_btn.setText("搜索")
+
+    def on_search_error(self, err_msg):
+        self.progress_label.setText(f"搜索出错: {err_msg}")
+        self.search_btn.setEnabled(True)
+        self.search_btn.setText("搜索")
 
     def do_download(self):
         selected = self.table.selectedItems()
@@ -149,18 +158,35 @@ class DownloadDialog(QDialog):
 
         row = selected[0].row()
         book_info = self.results[row]
+        default_filename = f"{book_info.get('bookName', '未知')}_{book_info.get('author', '未知')}.txt"
 
-        save_dir = os.path.join(os.path.expanduser("~"), "NovelRead_Downloads")
+        # 默认下载目录为当前执行目录下的 download 文件夹
+        app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        default_download_dir = os.path.join(app_dir, "download")
+        os.makedirs(default_download_dir, exist_ok=True)
         
+        default_save_path = os.path.join(default_download_dir, default_filename)
+
+        # 允许用户选择合成文件名及保存路径
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, 
+            "选择下载保存路径", 
+            default_save_path, 
+            "Text Files (*.txt);;All Files (*)"
+        )
+
+        if not save_path:
+            return  # 用户取消
+
         self.download_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         
-        self.worker = DownloadWorker(self.client, book_info, save_dir)
-        self.worker.progress_signal.connect(self.on_download_progress)
-        self.worker.finished_signal.connect(self.on_download_finished)
-        self.worker.error_signal.connect(self.on_download_error)
-        self.worker.start()
+        self.download_worker = DownloadWorker(self.client, book_info, save_path)
+        self.download_worker.progress_signal.connect(self.on_download_progress)
+        self.download_worker.finished_signal.connect(self.on_download_finished)
+        self.download_worker.error_signal.connect(self.on_download_error)
+        self.download_worker.start()
 
     def on_download_progress(self, current, total, text):
         self.progress_label.setText(text)
