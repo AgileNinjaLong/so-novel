@@ -16,6 +16,11 @@ class FloatingView(BaseStealthWindow):
         self.label.setWordWrap(False)
         self.label.setAcceptDrops(False)
         
+        # 禁止 label 根据内容自动撑开窗口
+        from PyQt6.QtWidgets import QSizePolicy
+        self.label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.label.setMinimumWidth(1)
+        
         font_size = self.config_mgr.settings.get("font_size", 11)
         font_family = self.config_mgr.settings.get("font_family", "Microsoft YaHei")
         font_color = self.config_mgr.settings.get("font_color", "#333333")
@@ -57,4 +62,12 @@ class FloatingView(BaseStealthWindow):
         progress_pct = int(((self.book.current_chapter_idx + 1) / total_chaps) * 100) if total_chaps else 0
 
         text = f"[{chap.title}] {current_line_text}  ({progress_pct}%)"
-        self.label.setText(text)
+        
+        # 智能截断超长文本，保证无论如何都不撑破当前窗口宽度
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.font())
+        available_width = self.width() - 36
+        elided_text = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(50, available_width))
+        
+        self.label.setText(elided_text)

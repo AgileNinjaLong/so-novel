@@ -151,9 +151,9 @@ class SoNovelClient:
 
         try:
             if method == "post":
-                resp = requests.post(url, data=data, headers=self.headers, cookies=cookies, timeout=10)
+                resp = self.session.post(url, data=data, cookies=cookies, timeout=10)
             else:
-                resp = requests.get(url, params=data, headers=self.headers, cookies=cookies, timeout=10)
+                resp = self.session.get(url, params=data, cookies=cookies, timeout=10)
             
             if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                 resp.encoding = resp.apparent_encoding
@@ -183,8 +183,9 @@ class SoNovelClient:
             pass
         return results
 
-    def search(self, keyword: str) -> List[Dict[str, Any]]:
+    def search(self, keyword: str, callback=None) -> List[Dict[str, Any]]:
         import concurrent.futures
+        import difflib
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
             futures = [executor.submit(self._search_single_rule, rule, keyword) for rule in self.rules]
@@ -192,9 +193,19 @@ class SoNovelClient:
                 try:
                     res = future.result()
                     if res:
+                        if callback:
+                            for r in res:
+                                r['ratio'] = difflib.SequenceMatcher(None, keyword, r.get('bookName', '')).ratio()
+                                callback(r)
                         results.extend(res)
                 except Exception:
                     pass
+        
+        if not callback:
+            for r in results:
+                r['ratio'] = difflib.SequenceMatcher(None, keyword, r.get('bookName', '')).ratio()
+        
+        results.sort(key=lambda x: x['ratio'], reverse=True)
         return results
 
     def get_toc(self, book_url: str, rule: dict) -> List[Dict[str, str]]:
@@ -219,7 +230,7 @@ class SoNovelClient:
         while current_url and current_url not in visited:
             visited.add(current_url)
             try:
-                resp = requests.get(current_url, headers=self.headers, timeout=10)
+                resp = self.session.get(current_url, timeout=10)
                 if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                     resp.encoding = resp.apparent_encoding
                 
@@ -263,7 +274,7 @@ class SoNovelClient:
         while current_url and current_url not in visited:
             visited.add(current_url)
             try:
-                resp = requests.get(current_url, headers=self.headers, timeout=10)
+                resp = self.session.get(current_url, timeout=10)
                 if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                     resp.encoding = resp.apparent_encoding
                 

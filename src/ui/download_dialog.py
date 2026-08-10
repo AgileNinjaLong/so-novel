@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 from src.core.sonovel_client import SoNovelClient
 
 class SearchWorker(QObject):
+    item_found_signal = pyqtSignal(dict)
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
@@ -22,7 +23,10 @@ class SearchWorker(QObject):
 
     def run(self):
         try:
-            res = self.client.search(self.keyword)
+            def on_item(item):
+                self.item_found_signal.emit(item)
+            
+            res = self.client.search(self.keyword, callback=on_item)
             self.finished_signal.emit(res)
         except Exception as e:
             self.error_signal.emit(str(e))
@@ -157,12 +161,25 @@ class DownloadDialog(QDialog):
         self.progress_label.setText("正在执行规则匹配与搜索，请稍候...")
         
         self.search_worker = SearchWorker(self.client, keyword)
+        self.search_worker.item_found_signal.connect(self.on_item_found)
         self.search_worker.finished_signal.connect(self.on_search_finished)
         self.search_worker.error_signal.connect(self.on_search_error)
         self.search_worker.start()
 
-    def on_search_finished(self, results):
-        self.results = results
+    def on_item_found(self, item):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        self.table.setItem(row, 0, QTableWidgetItem(item.get("bookName", "未知")))
+        self.table.setItem(row, 1, QTableWidgetItem(item.get("author", "未知")))
+        self.table.setItem(row, 2, QTableWidgetItem(item.get("latestChapter", "")))
+        self.table.setItem(row, 3, QTableWidgetItem(item.get("sourceName", "未知")))
+        
+        self.results.append(item)
+        self.progress_label.setText(f"搜索流式输出中... 已发现 {len(self.results)} 个结果")
+
+    def on_search_finished(self, sorted_results):
+        self.results = sorted_results
+        self.table.setRowCount(0)
         self.table.setRowCount(len(self.results))
         for row, item in enumerate(self.results):
             self.table.setItem(row, 0, QTableWidgetItem(item.get("bookName", "未知")))
