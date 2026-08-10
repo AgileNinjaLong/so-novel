@@ -18,7 +18,7 @@ def get_resource_path(relative_path):
         return path
     return os.path.join(os.path.abspath('.'), relative_path)
 
-RULES_PATH = get_resource_path(os.path.join("SoNovel", "rules", "main.json"))
+RULES_DIR = get_resource_path(os.path.join("SoNovel", "rules"))
 
 _js_lock = threading.Lock()
 _js_ctx = None
@@ -31,15 +31,25 @@ def _get_js_ctx():
     return _js_ctx
 
 class SoNovelClient:
-    def __init__(self, rules_path: str = RULES_PATH):
+    def __init__(self, rules_dir: str = RULES_DIR):
         self.rules = []
-        if os.path.exists(rules_path):
-            with open(rules_path, 'r', encoding='utf-8') as f:
-                self.rules = json.load(f)
+        if os.path.exists(rules_dir) and os.path.isdir(rules_dir):
+            for file_name in os.listdir(rules_dir):
+                if file_name.endswith('.json') and "template" not in file_name.lower():
+                    full_path = os.path.join(rules_dir, file_name)
+                    try:
+                        with open(full_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                self.rules.extend(data)
+                    except Exception as e:
+                        print(f"Error loading rule file {file_name}: {e}")
         
+        self.session = requests.Session()
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
+        self.session.headers.update(self.headers)
 
     def _parse_dict_string(self, data_str: str, keyword: str = "") -> dict:
         if not data_str or data_str == "{}":
