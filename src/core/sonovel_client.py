@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import re
 import urllib.parse
 from typing import List, Dict, Any, Optional
@@ -7,7 +8,17 @@ import requests
 from lxml import html
 import threading
 
-RULES_PATH = os.path.join("SoNovel", "rules", "main.json")
+def get_resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    # 开发环境下，如果是从 src/core/sonovel_client.py 运行，尝试寻找根目录
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    path = os.path.join(base_dir, relative_path)
+    if os.path.exists(path):
+        return path
+    return os.path.join(os.path.abspath('.'), relative_path)
+
+RULES_PATH = get_resource_path(os.path.join("SoNovel", "rules", "main.json"))
 
 _js_lock = threading.Lock()
 _js_ctx = None
