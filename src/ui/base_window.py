@@ -81,10 +81,11 @@ class BaseStealthWindow(QWidget):
             sc.activated.connect(self.toggle_auto_scroll)
             self.reading_shortcuts.append(sc)
 
-        # 实时加减速控制按键 = (+) / -
-        sc_speed_up = QShortcut(QKeySequence("="), self)
-        sc_speed_up.activated.connect(self.speed_up_auto_scroll)
-        self.reading_shortcuts.append(sc_speed_up)
+        # 实时加减速控制按键 = / + 与 -
+        for key in ["=", "+"]:
+            sc_speed_up = QShortcut(QKeySequence(key), self)
+            sc_speed_up.activated.connect(self.speed_up_auto_scroll)
+            self.reading_shortcuts.append(sc_speed_up)
 
         sc_slow_down = QShortcut(QKeySequence("-"), self)
         sc_slow_down.activated.connect(self.slow_down_auto_scroll)
@@ -120,15 +121,15 @@ class BaseStealthWindow(QWidget):
             self.scroll_y = 0.0
 
     def speed_up_auto_scroll(self):
-        curr = int(self.config_mgr.settings.get("auto_scroll_speed", 30))
-        new_val = min(200, curr + 5)
+        curr = float(self.config_mgr.settings.get("auto_scroll_speed", 8.0))
+        new_val = min(50.0, round(curr + 1.0, 1))
         self.config_mgr.settings["auto_scroll_speed"] = new_val
         self.config_mgr.save_immediately()
         self.update_content()
 
     def slow_down_auto_scroll(self):
-        curr = int(self.config_mgr.settings.get("auto_scroll_speed", 30))
-        new_val = max(5, curr - 5)
+        curr = float(self.config_mgr.settings.get("auto_scroll_speed", 8.0))
+        new_val = max(1.0, round(curr - 1.0, 1))
         self.config_mgr.settings["auto_scroll_speed"] = new_val
         self.config_mgr.save_immediately()
         self.update_content()
