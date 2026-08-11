@@ -104,8 +104,10 @@ class IDEPseudoView(BaseStealthWindow):
         start_idx = max(0, self.book.current_line_idx - half_visible)
         end_idx = min(len(self.lines), start_idx + visible_lines)
 
+        now_str = datetime.datetime.now().strftime('%H:%M:%S')
         for i in range(start_idx, end_idx):
-            prefix = f"# [DEBUG {datetime.datetime.now().strftime('%H:%M:%S')}] " if i != self.book.current_line_idx else ">>> # [FOCUS] "
+            # 保证前缀无论是 DEBUG 还是 FOCUS 聚焦行，长度一律精准保持为 20 个字符，防止文本缩进跳动
+            prefix = f"# [DEBUG {now_str}] " if i != self.book.current_line_idx else f"> [DEBUG {now_str}] "
             output_logs.append(f"{prefix}{self.lines[i]}")
 
         output_logs.append("--------------------------------------------------------------------------------")

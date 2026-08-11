@@ -104,10 +104,12 @@ class CADPseudoView(BaseStealthWindow):
         end_idx = min(len(self.lines), start_idx + visible_lines)
 
         for i in range(start_idx, end_idx):
+            # 使用 ljust(20) 精准对齐 Command: 与 Specify next point: 的前缀长度（均为 20 字符）
             if i == self.book.current_line_idx:
-                output_logs.append(f"Command: {self.lines[i]}")
+                prefix = "Command:".ljust(20)
             else:
-                output_logs.append(f"Specify next point: {self.lines[i]}")
+                prefix = "Specify next point: "
+            output_logs.append(f"{prefix}{self.lines[i]}")
 
         output_logs.append(f"Progress: {self.book.current_chapter_idx + 1}/{self.book.total_chapters}")
 
