@@ -54,12 +54,11 @@ class SettingsDialog(QDialog):
         self.hk_toggle_auto = QKeySequenceEdit(self)
         self.hk_toggle_auto.setKeySequence(QKeySequence(self.config_mgr.settings.get("hk_toggle_auto", "Ctrl+Space")))
 
-        from PyQt6.QtWidgets import QSpinBox
-        self.auto_speed_spin = QSpinBox(self)
-        self.auto_speed_spin.setRange(5, 200)
-        self.auto_speed_spin.setSingleStep(5)
+        self.auto_speed_spin = QDoubleSpinBox(self)
+        self.auto_speed_spin.setRange(1.0, 50.0)
+        self.auto_speed_spin.setSingleStep(1.0)
         self.auto_speed_spin.setSuffix(" px/s (像素/秒)")
-        self.auto_speed_spin.setValue(int(self.config_mgr.settings.get("auto_scroll_speed", 30)))
+        self.auto_speed_spin.setValue(float(self.config_mgr.settings.get("auto_scroll_speed", 8.0)))
 
         form_read.addRow("⬇️ 下一行:", self.hk_next_line)
         form_read.addRow("⬆️ 上一行:", self.hk_prev_line)

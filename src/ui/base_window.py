@@ -134,21 +134,32 @@ class BaseStealthWindow(QWidget):
         self.update_content()
 
     def _on_auto_scroll_timeout(self):
-        if not self.book or not self.book.chapters:
-            self.stop_auto_scroll()
+        if not self.is_auto_scrolling or not self.book or not self.book.chapters:
             return
+            
+        speed_px_per_sec = float(self.config_mgr.settings.get("auto_scroll_speed", 8.0))
+        speed_per_frame = speed_px_per_sec / 60.0
         
-        # 自动下移一行
-        if self.book.current_line_idx < len(self.lines) - 1:
-            self.book.current_line_idx += 1
+        if not hasattr(self, 'scroll_y'):
+            self.scroll_y = 0.0
+            
+        self.scroll_y += speed_per_frame
+        
+        line_height = getattr(self, 'line_height', 24)
+        if self.scroll_y >= line_height:
+            self.scroll_y -= line_height
+            if self.lines:
+                if self.book.current_line_idx < len(self.lines) - 1:
+                    self.book.current_line_idx += 1
+                else:
+                    if not self.book.next_chapter():
+                        self.stop_auto_scroll()
+                    else:
+                        self.recalculate_lines(self.book.get_current_chapter())
+                        self.book.current_line_idx = 0
             self.update_content()
         else:
-            # 最后一章最后一行读完，自动停止
-            if self.book.current_chapter_idx >= len(self.book.chapters) - 1:
-                self.stop_auto_scroll()
-            else:
-                if self.book.next_chapter():
-                    self.update_content()
+            self.render_view()
 
     def _jump_next_chap(self):
         if self.book and self.book.next_chapter():

@@ -15,7 +15,7 @@ DEFAULT_SETTINGS = {
     "hk_next_chap": "PageDown",
     "hk_prev_chap": "PageUp",
     "hk_toggle_auto": "Ctrl+Space",
-    "auto_scroll_speed": 30,
+    "auto_scroll_speed": 8.0,
     "auto_scroll_interval": 2.5,
     "opacity": 0.85,
     "idle_opacity": 0.15,
