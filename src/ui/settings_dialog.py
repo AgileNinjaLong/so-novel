@@ -1,7 +1,7 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QKeySequenceEdit, QFormLayout, QMessageBox, QGroupBox
+    QKeySequenceEdit, QFormLayout, QMessageBox, QGroupBox, QDoubleSpinBox
 )
 from PyQt6.QtGui import QKeySequence
 
@@ -9,8 +9,8 @@ class SettingsDialog(QDialog):
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
         self.config_mgr = config_manager
-        self.setWindowTitle("⚙️ 快捷键绑定设置")
-        self.resize(420, 360)
+        self.setWindowTitle("⚙️ 快捷键与自动翻页设置")
+        self.resize(440, 480)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self.init_ui()
@@ -38,8 +38,8 @@ class SettingsDialog(QDialog):
         group_mode.setLayout(form_mode)
         main_layout.addWidget(group_mode)
 
-        # ----------------- 组2：阅读控制 -----------------
-        group_read = QGroupBox("阅读与翻页操作按键")
+        # ----------------- 组2：阅读控制与自动翻页 -----------------
+        group_read = QGroupBox("阅读控制与自动翻页")
         form_read = QFormLayout()
         
         self.hk_next_line = QKeySequenceEdit(self)
@@ -51,10 +51,21 @@ class SettingsDialog(QDialog):
         self.hk_prev_chap = QKeySequenceEdit(self)
         self.hk_prev_chap.setKeySequence(QKeySequence(self.config_mgr.settings.get("hk_prev_chap", "PageUp")))
 
+        self.hk_toggle_auto = QKeySequenceEdit(self)
+        self.hk_toggle_auto.setKeySequence(QKeySequence(self.config_mgr.settings.get("hk_toggle_auto", "Ctrl+Space")))
+
+        self.auto_interval_spin = QDoubleSpinBox(self)
+        self.auto_interval_spin.setRange(0.5, 10.0)
+        self.auto_interval_spin.setSingleStep(0.5)
+        self.auto_interval_spin.setSuffix(" 秒/行")
+        self.auto_interval_spin.setValue(float(self.config_mgr.settings.get("auto_scroll_interval", 2.5)))
+
         form_read.addRow("⬇️ 下一行:", self.hk_next_line)
         form_read.addRow("⬆️ 上一行:", self.hk_prev_line)
         form_read.addRow("⏭️ 下一章:", self.hk_next_chap)
         form_read.addRow("⏮️ 上一章:", self.hk_prev_chap)
+        form_read.addRow("▶️ 开启/暂停自动翻页:", self.hk_toggle_auto)
+        form_read.addRow("⏱️ 自动翻页间隔时间:", self.auto_interval_spin)
         group_read.setLayout(form_read)
         main_layout.addWidget(group_read)
 
@@ -124,11 +135,12 @@ class SettingsDialog(QDialog):
         hk_prev_line = self.hk_prev_line.keySequence().toString()
         hk_next_chap = self.hk_next_chap.keySequence().toString()
         hk_prev_chap = self.hk_prev_chap.keySequence().toString()
+        hk_toggle_auto = self.hk_toggle_auto.keySequence().toString()
 
         # 防冲突校验 (同组或跨组都不允许重复，除非是空值)
         keys = [
             boss_key, hk_floating, hk_ide, hk_cad, 
-            hk_next_line, hk_prev_line, hk_next_chap, hk_prev_chap
+            hk_next_line, hk_prev_line, hk_next_chap, hk_prev_chap, hk_toggle_auto
         ]
         valid_keys = [k for k in keys if k]
         if len(valid_keys) != len(set(valid_keys)):
@@ -148,8 +160,10 @@ class SettingsDialog(QDialog):
         self.config_mgr.settings["hk_prev_line"] = hk_prev_line
         self.config_mgr.settings["hk_next_chap"] = hk_next_chap
         self.config_mgr.settings["hk_prev_chap"] = hk_prev_chap
+        self.config_mgr.settings["hk_toggle_auto"] = hk_toggle_auto
+        self.config_mgr.settings["auto_scroll_interval"] = self.auto_interval_spin.value()
         
         self.config_mgr.save_immediately()
         
-        QMessageBox.information(self, "设置成功", "快捷键已保存！(阅读控制快捷键立即生效，全局键需重启)")
+        QMessageBox.information(self, "设置成功", "快捷键与自动翻页间隔已保存！(控制快捷键立即生效，全局键需重启)")
         self.accept()

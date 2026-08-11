@@ -14,6 +14,8 @@ DEFAULT_SETTINGS = {
     "hk_prev_line": "Up",
     "hk_next_chap": "PageDown",
     "hk_prev_chap": "PageUp",
+    "hk_toggle_auto": "Ctrl+Space",
+    "auto_scroll_interval": 2.5,
     "opacity": 0.85,
     "idle_opacity": 0.15,
     "mode": "floating",  # 'floating' 或 'ide_pseudo'

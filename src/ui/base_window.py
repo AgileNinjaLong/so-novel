@@ -36,6 +36,10 @@ class BaseStealthWindow(QWidget):
 
         self.reading_shortcuts = []
 
+        self.is_auto_scrolling = False
+        self.auto_scroll_timer = QTimer(self)
+        self.auto_scroll_timer.timeout.connect(self._on_auto_scroll_timeout)
+
         self.setup_window_flags()
         self.reload_reading_shortcuts()
 
@@ -50,6 +54,7 @@ class BaseStealthWindow(QWidget):
         hk_prev_line = self.config_mgr.settings.get("hk_prev_line", "Up")
         hk_next_chap = self.config_mgr.settings.get("hk_next_chap", "PageDown")
         hk_prev_chap = self.config_mgr.settings.get("hk_prev_chap", "PageUp")
+        hk_toggle_auto = self.config_mgr.settings.get("hk_toggle_auto", "Ctrl+Space")
 
         if hk_next_line:
             sc = QShortcut(QKeySequence(hk_next_line), self)
@@ -71,10 +76,88 @@ class BaseStealthWindow(QWidget):
             sc.activated.connect(self._jump_prev_chap)
             self.reading_shortcuts.append(sc)
 
+        if hk_toggle_auto:
+            sc = QShortcut(QKeySequence(hk_toggle_auto), self)
+            sc.activated.connect(self.toggle_auto_scroll)
+            self.reading_shortcuts.append(sc)
+
+        # 实时加减速控制按键 = (+) / -
+        sc_speed_up = QShortcut(QKeySequence("="), self)
+        sc_speed_up.activated.connect(self.speed_up_auto_scroll)
+        self.reading_shortcuts.append(sc_speed_up)
+
+        sc_slow_down = QShortcut(QKeySequence("-"), self)
+        sc_slow_down.activated.connect(self.slow_down_auto_scroll)
+        self.reading_shortcuts.append(sc_slow_down)
+
         # 绑定固定功能
         sc_esc = QShortcut(QKeySequence("Esc"), self)
         sc_esc.activated.connect(self.toggle_boss_key)
         self.reading_shortcuts.append(sc_esc)
+
+    def toggle_auto_scroll(self):
+        if self.is_auto_scrolling:
+            self.stop_auto_scroll()
+        else:
+            self.start_auto_scroll()
+
+    def start_auto_scroll(self):
+        if not self.book or not self.book.chapters:
+            return
+        self.is_auto_scrolling = True
+        interval_sec = float(self.config_mgr.settings.get("auto_scroll_interval", 2.5))
+        self.auto_scroll_timer.setInterval(int(interval_sec * 1000))
+        self.auto_scroll_timer.start()
+        self.update_content()
+
+    def stop_auto_scroll(self):
+        self.is_auto_scrolling = False
+        self.auto_scroll_timer.stop()
+        self.update_content()
+
+    def reset_auto_scroll_timer(self):
+        """用户人工按键/滚动操作时，重置本行倒计时继续翻"""
+        if self.is_auto_scrolling and self.auto_scroll_timer.isActive():
+            interval_sec = float(self.config_mgr.settings.get("auto_scroll_interval", 2.5))
+            self.auto_scroll_timer.setInterval(int(interval_sec * 1000))
+            self.auto_scroll_timer.start()
+
+    def speed_up_auto_scroll(self):
+        curr = float(self.config_mgr.settings.get("auto_scroll_interval", 2.5))
+        new_val = max(0.5, round(curr - 0.5, 1))
+        self.config_mgr.settings["auto_scroll_interval"] = new_val
+        self.config_mgr.save_immediately()
+        if self.is_auto_scrolling:
+            self.auto_scroll_timer.setInterval(int(new_val * 1000))
+            self.auto_scroll_timer.start()
+        self.update_content()
+
+    def slow_down_auto_scroll(self):
+        curr = float(self.config_mgr.settings.get("auto_scroll_interval", 2.5))
+        new_val = min(10.0, round(curr + 0.5, 1))
+        self.config_mgr.settings["auto_scroll_interval"] = new_val
+        self.config_mgr.save_immediately()
+        if self.is_auto_scrolling:
+            self.auto_scroll_timer.setInterval(int(new_val * 1000))
+            self.auto_scroll_timer.start()
+        self.update_content()
+
+    def _on_auto_scroll_timeout(self):
+        if not self.book or not self.book.chapters:
+            self.stop_auto_scroll()
+            return
+        
+        # 自动下移一行
+        if self.book.current_line_idx < len(self.lines) - 1:
+            self.book.current_line_idx += 1
+            self.update_content()
+        else:
+            # 最后一章最后一行读完，自动停止
+            if self.book.current_chapter_idx >= len(self.book.chapters) - 1:
+                self.stop_auto_scroll()
+            else:
+                if self.book.next_chapter():
+                    self.update_content()
 
     def _jump_next_chap(self):
         if self.book and self.book.next_chapter():
@@ -277,6 +360,7 @@ class BaseStealthWindow(QWidget):
     def next_line(self):
         if not self.book:
             return
+        self.reset_auto_scroll_timer()
         if self.book.current_line_idx < len(self.lines) - 1:
             self.book.current_line_idx += 1
             self.update_content()
@@ -287,6 +371,7 @@ class BaseStealthWindow(QWidget):
     def prev_line(self):
         if not self.book:
             return
+        self.reset_auto_scroll_timer()
         if self.book.current_line_idx > 0:
             self.book.current_line_idx -= 1
             self.update_content()
@@ -301,6 +386,7 @@ class BaseStealthWindow(QWidget):
     def wheelEvent(self, event: QWheelEvent):
         if not self.book:
             return
+        self.reset_auto_scroll_timer()
         delta = event.angleDelta().y()
         if delta < 0:
             self.next_line()
@@ -308,6 +394,10 @@ class BaseStealthWindow(QWidget):
             self.prev_line()
 
     def keyPressEvent(self, event: QKeyEvent):
+        if not self.book:
+            super().keyPressEvent(event)
+            return
+        self.reset_auto_scroll_timer()
         key = event.key()
         if key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
             self.next_line()
@@ -350,6 +440,12 @@ class BaseStealthWindow(QWidget):
             chap_action = menu.addAction(f"📖 章节目录 (共 {len(self.book.chapters)} 章)")
                 
         menu.addSeparator()
+        hk_auto = self.config_mgr.settings.get("hk_toggle_auto", "Ctrl+Space")
+        if self.is_auto_scrolling:
+            auto_action = menu.addAction(f"⏸️ 暂停自动翻页 ({hk_auto})")
+        else:
+            auto_action = menu.addAction(f"▶️ 开启自动翻页 ({hk_auto})")
+
         settings_action = menu.addAction("⚙️ 快捷键绑定设置")
         boss_info = menu.addAction(f"🛡️ 隐身键: {self.config_mgr.settings.get('boss_key', 'Alt+Z')}")
         boss_info.setEnabled(False)
@@ -373,6 +469,8 @@ class BaseStealthWindow(QWidget):
             self.update_opacity_by_hover()
         elif chap_action and action == chap_action:
             QTimer.singleShot(10, self.open_chapter_dialog)
+        elif action == auto_action:
+            self.toggle_auto_scroll()
         elif action == settings_action:
             self.is_dialog_open = True
             self.setWindowOpacity(self.active_opacity)
@@ -386,6 +484,8 @@ class BaseStealthWindow(QWidget):
 
     def toggle_boss_key(self):
         if self.isVisible():
+            if self.is_auto_scrolling:
+                self.stop_auto_scroll()
             self.hide()
             self.is_boss_hidden = True
         else:

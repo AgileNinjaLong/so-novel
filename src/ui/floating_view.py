@@ -95,6 +95,6 @@ class FloatingView(BaseStealthWindow):
         total_chaps = self.book.total_chapters
         progress_pct = int(((self.book.current_chapter_idx + 1) / total_chaps) * 100) if total_chaps else 0
 
-        # 由于使用了 QTextLayout 像素级排版，这里不再需要使用 elidedText，因为已经精准适配了物理宽度
-        text = f"[{chap.title}] {current_line_text}  ({progress_pct}%)"
+        auto_tag = f" ▶ [{self.config_mgr.settings.get('auto_scroll_interval', 2.5)}s]" if self.is_auto_scrolling else ""
+        text = f"[{chap.title}] {current_line_text}  ({progress_pct}%){auto_tag}"
         self.label.setText(text)

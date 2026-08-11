@@ -111,6 +111,7 @@ class IDEPseudoView(BaseStealthWindow):
             output_logs.append(f"{prefix}{self.lines[i]}")
 
         output_logs.append("--------------------------------------------------------------------------------")
-        output_logs.append(f"[INFO {datetime.datetime.now().strftime('%H:%M:%S')}] Status: OK | Chapter Progress: {self.book.current_chapter_idx + 1}/{self.book.total_chapters}")
+        auto_str = f" (AUTO-RUN {self.config_mgr.settings.get('auto_scroll_interval', 2.5)}s)" if self.is_auto_scrolling else ""
+        output_logs.append(f"[INFO {datetime.datetime.now().strftime('%H:%M:%S')}] Status: OK{auto_str} | Chapter Progress: {self.book.current_chapter_idx + 1}/{self.book.total_chapters}")
 
         self.editor.setText("\n".join(output_logs))

@@ -111,6 +111,7 @@ class CADPseudoView(BaseStealthWindow):
                 prefix = "Specify next point: "
             output_logs.append(f"{prefix}{self.lines[i]}")
 
-        output_logs.append(f"Progress: {self.book.current_chapter_idx + 1}/{self.book.total_chapters}")
+        auto_str = f" [AUTO {self.config_mgr.settings.get('auto_scroll_interval', 2.5)}s]" if self.is_auto_scrolling else ""
+        output_logs.append(f"Progress: {self.book.current_chapter_idx + 1}/{self.book.total_chapters}{auto_str}")
 
         self.editor.setText("\n".join(output_logs))

@@ -80,3 +80,41 @@ def test_chapter_dialog(qapp):
     assert not dialog.list_widget.item(9).isHidden()
     assert dialog.list_widget.item(0).isHidden()
 
+def test_auto_scroll_feature(qapp, tmp_path):
+    from src.core.book import Book
+    cfg_file = str(tmp_path / "cfg.json")
+    cfg = ConfigManager(config_path=cfg_file)
+    view = FloatingView(cfg)
+    
+    # 模拟加载一本书
+    book = Book(title="测试书籍", author="测试作者", file_path="test.txt", format="txt")
+    book.chapters = [
+        Chapter(title="第1章", content="第一行\n第二行\n第三行"),
+        Chapter(title="第2章", content="第四行\n第五行")
+    ]
+    view.book = book
+    view.update_content()
+    
+    # 1. 测试开启自动翻页
+    assert view.is_auto_scrolling is False
+    view.start_auto_scroll()
+    assert view.is_auto_scrolling is True
+    assert view.auto_scroll_timer.isActive() is True
+    
+    # 2. 触发超时事件，推进到下一行
+    view._on_auto_scroll_timeout()
+    assert view.book.current_line_idx == 1
+    
+    # 3. 模拟人工操作重置倒计时
+    view.next_line()
+    assert view.book.current_line_idx == 2
+    assert view.auto_scroll_timer.isActive() is True
+    
+    # 4. 老板键暂停保护
+    view.show()
+    assert view.isVisible() is True
+    view.toggle_boss_key()
+    assert view.is_auto_scrolling is False
+    assert view.auto_scroll_timer.isActive() is False
+
+
