@@ -105,8 +105,7 @@ class BaseStealthWindow(QWidget):
         if not self.book or not self.book.chapters:
             return
         self.is_auto_scrolling = True
-        interval_sec = float(self.config_mgr.settings.get("auto_scroll_interval", 2.5))
-        self.auto_scroll_timer.setInterval(int(interval_sec * 1000))
+        self.auto_scroll_timer.setInterval(16)  # 60 FPS 匀速连续帧率
         self.auto_scroll_timer.start()
         self.update_content()
 
@@ -116,30 +115,22 @@ class BaseStealthWindow(QWidget):
         self.update_content()
 
     def reset_auto_scroll_timer(self):
-        """用户人工按键/滚动操作时，重置本行倒计时继续翻"""
-        if self.is_auto_scrolling and self.auto_scroll_timer.isActive():
-            interval_sec = float(self.config_mgr.settings.get("auto_scroll_interval", 2.5))
-            self.auto_scroll_timer.setInterval(int(interval_sec * 1000))
-            self.auto_scroll_timer.start()
+        """用户人工按键/滚动操作时，保持匀速推进"""
+        if hasattr(self, 'scroll_y'):
+            self.scroll_y = 0.0
 
     def speed_up_auto_scroll(self):
-        curr = float(self.config_mgr.settings.get("auto_scroll_interval", 2.5))
-        new_val = max(0.5, round(curr - 0.5, 1))
-        self.config_mgr.settings["auto_scroll_interval"] = new_val
+        curr = int(self.config_mgr.settings.get("auto_scroll_speed", 30))
+        new_val = min(200, curr + 5)
+        self.config_mgr.settings["auto_scroll_speed"] = new_val
         self.config_mgr.save_immediately()
-        if self.is_auto_scrolling:
-            self.auto_scroll_timer.setInterval(int(new_val * 1000))
-            self.auto_scroll_timer.start()
         self.update_content()
 
     def slow_down_auto_scroll(self):
-        curr = float(self.config_mgr.settings.get("auto_scroll_interval", 2.5))
-        new_val = min(10.0, round(curr + 0.5, 1))
-        self.config_mgr.settings["auto_scroll_interval"] = new_val
+        curr = int(self.config_mgr.settings.get("auto_scroll_speed", 30))
+        new_val = max(5, curr - 5)
+        self.config_mgr.settings["auto_scroll_speed"] = new_val
         self.config_mgr.save_immediately()
-        if self.is_auto_scrolling:
-            self.auto_scroll_timer.setInterval(int(new_val * 1000))
-            self.auto_scroll_timer.start()
         self.update_content()
 
     def _on_auto_scroll_timeout(self):

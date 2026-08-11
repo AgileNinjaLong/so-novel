@@ -101,7 +101,8 @@ def test_auto_scroll_feature(qapp, tmp_path):
     assert view.is_auto_scrolling is True
     assert view.auto_scroll_timer.isActive() is True
     
-    # 2. 触发超时事件，推进到下一行
+    # 2. 触发超时事件，像素滚动达到一行高度时推进到下一行
+    view.scroll_y = 28.0
     view._on_auto_scroll_timeout()
     assert view.book.current_line_idx == 1
     

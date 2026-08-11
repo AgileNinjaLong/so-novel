@@ -1,83 +1,55 @@
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget, QSizePolicy
-from PyQt6.QtGui import QFont, QFontMetrics, QTextLayout
-from PyQt6.QtCore import QPropertyAnimation, QPoint, QEasingCurve, QParallelAnimationGroup, Qt
+from PyQt6.QtWidgets import QWidget
+from PyQt6.QtGui import QFont, QFontMetrics, QPainter, QColor
+from PyQt6.QtCore import Qt, QTimer
 from src.ui.base_window import BaseStealthWindow
 
 class FloatingView(BaseStealthWindow):
     def __init__(self, config_manager, parent=None):
         super().__init__(config_manager, parent)
-        self.anim_group = None
+        self.scroll_y = 0.0
+        self.line_height = 28
         self.init_ui()
 
     def init_ui(self):
         self.resize(600, 36)
-        layout = QVBoxLayout()
-        layout.setContentsMargins(10, 4, 10, 4)
-
-        # 挂载两个 QLabel 的容器层，用于平滑向上滑动动画
-        self.container = QWidget(self)
-        self.container.setStyleSheet("background: transparent;")
-        
         font_size = self.config_mgr.settings.get("font_size", 11)
         font_family = self.config_mgr.settings.get("font_family", "Microsoft YaHei")
-        font_color = self.config_mgr.settings.get("font_color", "#333333")
-        bg_color = self.config_mgr.settings.get("bg_color", "#FFFFFF")
-
         self.setFont(QFont(font_family, font_size))
+
+    def _on_auto_scroll_timeout(self):
+        """60 FPS 匀速连续向上像素推进回调"""
+        if not self.is_auto_scrolling:
+            return
+            
+        speed_px_per_sec = float(self.config_mgr.settings.get("auto_scroll_speed", 30))
+        speed_per_frame = speed_px_per_sec / 60.0  # 每帧增量像素
         
-        style = f"""
-            QLabel {{
-                color: {font_color};
-                background-color: {bg_color};
-                border-radius: 4px;
-                padding: 2px 8px;
-            }}
-        """
-
-        self.label1 = QLabel("NovelRead | 右键打开文件或直接拖拽小说到此处", self.container)
-        self.label1.setStyleSheet(style)
-        self.label1.setWordWrap(False)
-        self.label1.setAcceptDrops(False)
-
-        self.label2 = QLabel("", self.container)
-        self.label2.setStyleSheet(style)
-        self.label2.setWordWrap(False)
-        self.label2.setAcceptDrops(False)
-
-        self.label1.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.label2.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-
-        layout.addWidget(self.container)
-        self.setLayout(layout)
+        self.scroll_y += speed_per_frame
         
-        self._current_label = self.label1
-        self._next_label = self.label2
+        # 当滚动过一行高度时，同步推进 line_idx 索引
+        if self.scroll_y >= self.line_height:
+            self.scroll_y -= self.line_height
+            if self.book and self.lines:
+                if self.book.current_line_idx < len(self.lines) - 1:
+                    self.book.current_line_idx += 1
+                else:
+                    if not self.book.next_chapter():
+                        self.stop_auto_scroll()
+                    else:
+                        self.recalculate_lines(self.book.get_current_chapter())
+                        self.book.current_line_idx = 0
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        w = self.container.width()
-        h = self.container.height()
-        self.label1.setGeometry(0, 0, w, h)
-        self.label2.setGeometry(0, h, w, h)
-
-    def get_line_length(self) -> int:
-        fm = QFontMetrics(self.font())
-        char_width = fm.horizontalAdvance("中")
-        if char_width == 0:
-            char_width = 12
-        available_width = self.width() - 40
-        return max(10, available_width // char_width)
+        self.update()  # 触发 60 FPS 画面重绘
 
     def recalculate_lines(self, chap):
+        from PyQt6.QtGui import QTextLayout
         fm = QFontMetrics(self.font())
         
-        # 预留给标题和进度的空间
         title_width = fm.horizontalAdvance(f"[{chap.title}]   (100%)")
         available_width = self.width() - title_width - 30
         if available_width < 50:
             available_width = 50
             
-        # 如果缓存有效，则直接返回
         if hasattr(self, '_cached_chap_index') and self._cached_chap_index == chap.index and getattr(self, '_cached_width', 0) == available_width:
             return
             
@@ -102,60 +74,49 @@ class FloatingView(BaseStealthWindow):
         self._cached_width = available_width
 
     def render_view(self, error_msg: str = None):
-        if error_msg:
-            self._current_label.setText(error_msg)
-            return
+        self.update()
 
-        if not self.book or not self.book.chapters:
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        bg_color = QColor(self.config_mgr.settings.get("bg_color", "#FFFFFF"))
+        font_color = QColor(self.config_mgr.settings.get("font_color", "#333333"))
+
+        # 绘制无边框圆角背景底板
+        painter.setBrush(bg_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(self.rect(), 4, 4)
+
+        painter.setFont(self.font())
+        painter.setPen(font_color)
+
+        if not self.book or not self.book.chapters or not self.lines:
+            painter.drawText(12, 24, "NovelRead | 右键打开文件或直接拖拽小说到此处")
             return
 
         chap = self.book.get_current_chapter()
-        current_line_text = self.lines[self.book.current_line_idx] if self.lines else ""
         total_chaps = self.book.total_chapters
         progress_pct = int(((self.book.current_chapter_idx + 1) / total_chaps) * 100) if total_chaps else 0
 
-        auto_tag = f" ▶ [{self.config_mgr.settings.get('auto_scroll_interval', 2.5)}s]" if self.is_auto_scrolling else ""
-        new_text = f"[{chap.title}] {current_line_text}  ({progress_pct}%){auto_tag}"
+        auto_speed = self.config_mgr.settings.get("auto_scroll_speed", 30)
+        auto_tag = f" ▶ [{auto_speed}px/s]" if self.is_auto_scrolling else ""
+        header_tag = f"[{chap.title}] "
+        footer_tag = f"  ({progress_pct}%){auto_tag}"
 
-        # 如果没有开启自动翻页或者是第一次渲染/提示消息，直接静态更新无动画
-        if not self.is_auto_scrolling or self._current_label.text() == new_text or "NovelRead" in self._current_label.text():
-            if self.anim_group and self.anim_group.state() == QParallelAnimationGroup.State.Running:
-                self.anim_group.stop()
-            self._current_label.setText(new_text)
-            return
+        curr_idx = self.book.current_line_idx
+        next_idx = curr_idx + 1 if curr_idx + 1 < len(self.lines) else 0
 
-        # 如果动画正在进行，先强制停止并复位
-        if self.anim_group and self.anim_group.state() == QParallelAnimationGroup.State.Running:
-            self.anim_group.stop()
-            self._current_label.setGeometry(0, 0, self.container.width(), self.container.height())
-            self._next_label.setGeometry(0, self.container.height(), self.container.width(), self.container.height())
+        line1 = self.lines[curr_idx]
+        line2 = self.lines[next_idx] if curr_idx + 1 < len(self.lines) else ""
 
-        # 执行平滑向上滑动动画 (350ms OutCubic)
-        w = self.container.width()
-        h = self.container.height()
+        text1 = f"{header_tag}{line1}{footer_tag}"
+        text2 = f"{header_tag}{line2}{footer_tag}"
 
-        self._next_label.setText(new_text)
-        self._next_label.setGeometry(0, h, w, h)
+        # 基于 scroll_y 绘制像素级匀速向上滑动
+        draw_y1 = int(24 - self.scroll_y)
+        draw_y2 = int(24 + self.line_height - self.scroll_y)
 
-        anim1 = QPropertyAnimation(self._current_label, b"pos", self)
-        anim1.setDuration(350)
-        anim1.setStartValue(QPoint(0, 0))
-        anim1.setEndValue(QPoint(0, -h))
-        anim1.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-        anim2 = QPropertyAnimation(self._next_label, b"pos", self)
-        anim2.setDuration(350)
-        anim2.setStartValue(QPoint(0, h))
-        anim2.setEndValue(QPoint(0, 0))
-        anim2.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-        self.anim_group = QParallelAnimationGroup(self)
-        self.anim_group.addAnimation(anim1)
-        self.anim_group.addAnimation(anim2)
-
-        def _on_anim_finished():
-            # 动画结束，交换两个 label 身份并归位
-            self._current_label, self._next_label = self._next_label, self._current_label
-
-        self.anim_group.finished.connect(_on_anim_finished)
-        self.anim_group.start()
+        painter.drawText(12, draw_y1, text1)
+        if line2:
+            painter.drawText(12, draw_y2, text2)
