@@ -534,8 +534,8 @@ class BookshelfWindow(QMainWindow):
 
         b_layout = QHBoxLayout()
         self.mode_combo = QComboBox()
+        self.mode_combo.addItem("📚 EPUB 电子书 (标准打包 - 默认首选)", "epub")
         self.mode_combo.addItem("📄 单文件 TXT (合并文本)", "txt")
-        self.mode_combo.addItem("📚 EPUB 电子书 (标准打包)", "epub")
         self.mode_combo.addItem("📂 按章节拆分目录 (离散文件)", "dir")
 
         self.download_btn = QPushButton("📥 下载选中的小说 (添加任务)")
@@ -911,26 +911,23 @@ class BookshelfWindow(QMainWindow):
 
         row = selected[0].row()
         book_info = self.search_results[row]
-        export_mode = self.mode_combo.currentData() or "txt"
+        export_mode = self.mode_combo.currentData() or "epub"
 
         book_title = book_info.get('bookName', '未知')
         author_name = book_info.get('author', '未知')
 
-        # 默认保存路径放置在项目根目录下的 downloads 文件夹中
-        if export_mode == "epub":
-            default_filename = f"{book_title}_{author_name}.epub"
-            default_save_path = os.path.join(DEFAULT_DOWNLOAD_DIR, default_filename)
-            save_path, _ = QFileDialog.getSaveFileName(self, "选择 EPUB 保存路径", default_save_path, "EPUB Files (*.epub)")
-        elif export_mode == "dir":
-            default_filename = f"{book_title}_{author_name}"
-            default_save_path = os.path.join(DEFAULT_DOWNLOAD_DIR, default_filename)
-            save_path = QFileDialog.getExistingDirectory(self, "选择保存文件夹", default_save_path)
-        else:
-            default_filename = f"{book_title}_{author_name}.txt"
-            default_save_path = os.path.join(DEFAULT_DOWNLOAD_DIR, default_filename)
-            save_path, _ = QFileDialog.getSaveFileName(self, "选择 TXT 保存路径", default_save_path, "Text Files (*.txt)")
+        safe_title = re.sub(r'[\\/:*?"<>|]', '_', book_title)
+        safe_author = re.sub(r'[\\/:*?"<>|]', '_', author_name)
 
-        if not save_path: return
+        os.makedirs(DEFAULT_DOWNLOAD_DIR, exist_ok=True)
+
+        # 静默自动落盘至项目根目录下的 downloads 文件夹中，不需要每次弹窗询问
+        if export_mode == "epub":
+            save_path = os.path.join(DEFAULT_DOWNLOAD_DIR, f"{safe_title}_{safe_author}.epub")
+        elif export_mode == "dir":
+            save_path = os.path.join(DEFAULT_DOWNLOAD_DIR, f"{safe_title}_{safe_author}")
+        else: # txt
+            save_path = os.path.join(DEFAULT_DOWNLOAD_DIR, f"{safe_title}_{safe_author}.txt")
 
         task_id = f"task_{int(time.time() * 1000)}"
         worker = DownloadWorker(self.client, task_id, book_info, save_path, export_mode=export_mode)
