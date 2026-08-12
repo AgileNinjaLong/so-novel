@@ -118,4 +118,18 @@ def test_auto_scroll_feature(qapp, tmp_path):
     assert view.is_auto_scrolling is False
     assert view.auto_scroll_timer.isActive() is False
 
+def test_search_connectivity_and_cancellation(qapp):
+    from src.ui.download_dialog import DownloadDialog
+    dialog = DownloadDialog()
+    dialog.search_input.setText("测试")
+    
+    # 触发搜索
+    dialog.do_search()
+    assert dialog.is_searching is True
+    assert dialog.search_btn.text() == "取消"
+    
+    # 模拟用户在连通性测试/连接途中中途取消
+    dialog.cancel_search()
+    assert dialog.search_worker.cancel_event.is_set() is True
+
 

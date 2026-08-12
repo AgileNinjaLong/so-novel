@@ -82,11 +82,17 @@
 1. **对齐 SoNovel 完整书源规则库**：
    * 必须载入包含 `main.json`、`cloudflare.json`、`no-search.json`、`proxy-required.json`、`rate-limit.json` 在内的全量规则库。
    * 支持针对不同站点规则的频率限制 (`rate-limit`) 与代理路由控制。
-2. **可选合并模式 (Optional Export / Merge Modes)**：
+2. **书源连通性预检与 UI 状态显示 (Pre-search Connectivity Check & Real-time Status)**：
+   * 在执行关键词搜索前，自动对各个书源发起快速连通性响应测试。
+   * UI 必须实时吐出当前进度（如 `正在测试书源连通性 [5/25]: 笔趣阁...`），严禁界面卡死或无响应假死。
+3. **搜书强行中途取消机制 (In-Flight Search Cancellation)**：
+   * 搜索与连通性测试过程中，UI 按钮变为 `取消`。
+   * 支持用户随时在中途（包括连接测试中）强制取消，后台须响应 `cancel_event` 并迅速中断请求，界面优雅恢复 `搜索` 状态。
+4. **可选合并模式 (Optional Export / Merge Modes)**：
    * **TXT 单文件合并**：将小说全本章节合成为单个 `.txt` 文本文件。
    * **EPUB 电子书合成**：支持将下载的章节直接打包合成为标准的 `.epub` 电子书文件（带完整的 TOC 目录与 HTML 样式）。
    * **按章节独立拆分**：将各个章节保存为独立的 `.txt` 文件存放于对应的小说目录中。
-3. **搜书结果稳定性与确定性排序 (Deterministic Search Ranking)**：
+5. **搜书结果稳定性与确定性排序 (Deterministic Search Ranking)**：
    * 搜书结果必须依据（匹配度 Scoring > 书源优先级 > 书名）进行稳定确定性排序。
    * 解决多次搜索因线程并发返回顺序随机导致列表顺序撕裂、二次搜索结果不一致的问题。
 

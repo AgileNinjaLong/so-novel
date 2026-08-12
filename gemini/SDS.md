@@ -172,7 +172,10 @@ class Book:
 2. **多格式合成器 (`EpubBuilder` & `MultiFileExporter`)**：
    * **TXT 单文件模式**：拼接全局纯文本带章节分界符。
    * **EPUB 电子书模式**：原生产生 `mimetype`, `META-INF/container.xml`, `OEBPS/content.opf`, `OEBPS/toc.ncx` 及 XHTML 章节模板，使用 `zipfile.ZipFile` 打包压制成标准 `.epub` 电子书。
-   * **章节独立拆分模式**：在指定保存目录下创建小说同名文件夹，按照 `0001_第1章.txt` 顺序离散落盘。
+   3. **书源连通性预检与取消架构 (Connectivity Pre-check & Cancel Architecture)**：
+      * **连通性测试 (`test_connectivity`)**：在发爆检索前，使用 3 秒超时向各个 `rule` 的基准 Host 发起 `HEAD/GET` 连通性测试，并将结果广播至 UI。
+      * **UI 实时状态输出 (`status_signal`)**：避免用户产生卡顿错觉，通过信号向 UI `progress_label` 实时输出类似 `正在测试书源连通性 [5/25]: 笔趣阁...` 的信息。
+      * **线程安全取消中途打断 (`cancel_event`)**：`SearchWorker` 继承 `cancel_event = threading.Event()`。每完成一个站点测试或搜书，严格检测 `is_set()`，若为 True 则立即销毁剩余 Future 任务，断开 HTTP 连接并向 UI 发送取消中断完成信号。
 
 ---
 

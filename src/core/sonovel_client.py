@@ -187,13 +187,67 @@ class SoNovelClient:
             pass
         return results
 
-    def search(self, keyword: str, callback=None) -> List[Dict[str, Any]]:
+    def test_rule_connectivity(self, rule: dict) -> bool:
+        """对单本书源规则的目标 host 发起快速连通性响应测试 (2.5s 超时)"""
+        if rule.get("disabled", False):
+            return False
+        search_rule = rule.get("search", {})
+        url = search_rule.get("url", "")
+        if not url:
+            return False
+            
+        try:
+            parsed = urllib.parse.urlparse(url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            resp = self.session.head(base_url, timeout=2.5, allow_redirects=True)
+            return resp.status_code < 500
+        except Exception:
+            try:
+                resp = self.session.get(url.replace('%s', 'test'), timeout=2.5)
+                return resp.status_code < 500
+            except Exception:
+                return False
+
+    def search(self, keyword: str, callback=None, status_callback=None, cancel_event=None) -> List[Dict[str, Any]]:
         import concurrent.futures
         import difflib
+        
+        # 阶段 1：对全部书源规则发起连通性预检，广播 UI 进度
+        valid_rules = []
+        total_rules = len(self.rules)
+        
+        for idx, rule in enumerate(self.rules, start=1):
+            if cancel_event and cancel_event.is_set():
+                if status_callback:
+                    status_callback("用户已中途取消搜索。")
+                return []
+                
+            rule_name = rule.get("name", f"书源-{idx}")
+            if status_callback:
+                status_callback(f"正在测试书源连通性 [{idx}/{total_rules}]: {rule_name} ...")
+                
+            # 执行快速预检
+            if self.test_rule_connectivity(rule):
+                valid_rules.append(rule)
+
+        if cancel_event and cancel_event.is_set():
+            if status_callback:
+                status_callback("用户已中途取消搜索。")
+            return []
+
+        if status_callback:
+            status_callback(f"书源连通性测试完成！可用书源 {len(valid_rules)} 个，正在极速匹配检索...")
+
+        # 阶段 2：在可用书源上开展高并发检索
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-            futures = [executor.submit(self._search_single_rule, rule, keyword) for rule in self.rules]
+            futures = {executor.submit(self._search_single_rule, rule, keyword): rule for rule in valid_rules}
             for future in concurrent.futures.as_completed(futures):
+                if cancel_event and cancel_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    if status_callback:
+                        status_callback("搜索已取消。")
+                    return []
                 try:
                     res = future.result()
                     if res:

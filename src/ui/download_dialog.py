@@ -9,6 +9,7 @@ from src.core.sonovel_client import SoNovelClient
 
 class SearchWorker(QObject):
     item_found_signal = pyqtSignal(dict)
+    status_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
@@ -16,17 +17,30 @@ class SearchWorker(QObject):
         super().__init__()
         self.client = client
         self.keyword = keyword
+        import threading
+        self.cancel_event = threading.Event()
 
     def start(self):
         import threading
         threading.Thread(target=self.run, daemon=True).start()
 
+    def cancel(self):
+        self.cancel_event.set()
+
     def run(self):
         try:
             def on_item(item):
                 self.item_found_signal.emit(item)
+
+            def on_status(msg):
+                self.status_signal.emit(msg)
             
-            res = self.client.search(self.keyword, callback=on_item)
+            res = self.client.search(
+                self.keyword, 
+                callback=on_item, 
+                status_callback=on_status, 
+                cancel_event=self.cancel_event
+            )
             self.finished_signal.emit(res)
         except Exception as e:
             self.error_signal.emit(str(e))
@@ -194,21 +208,33 @@ class DownloadDialog(QDialog):
         self.results = []
 
     def do_search(self):
+        if getattr(self, 'is_searching', False):
+            self.cancel_search()
+            return
+
         keyword = self.search_input.text().strip()
         if not keyword:
             return
 
-        self.search_btn.setEnabled(False)
-        self.search_btn.setText("搜索中...")
+        self.is_searching = True
+        self.search_btn.setText("取消")
+        self.search_btn.setEnabled(True)
         self.table.setRowCount(0)
         self.results.clear()
-        self.progress_label.setText("正在执行规则匹配与搜索，请稍候...")
+        self.progress_label.setText("正在连接书源并测试连通性...")
         
         self.search_worker = SearchWorker(self.client, keyword)
         self.search_worker.item_found_signal.connect(self.on_item_found)
+        self.search_worker.status_signal.connect(self.on_search_status)
         self.search_worker.finished_signal.connect(self.on_search_finished)
         self.search_worker.error_signal.connect(self.on_search_error)
         self.search_worker.start()
+
+    def cancel_search(self):
+        if hasattr(self, 'search_worker') and self.search_worker:
+            self.search_worker.cancel()
+            self.progress_label.setText("正在强行打断连接，请稍候...")
+            self.search_btn.setEnabled(False)
 
     def on_item_found(self, item):
         row = self.table.rowCount()
@@ -221,7 +247,11 @@ class DownloadDialog(QDialog):
         self.results.append(item)
         self.progress_label.setText(f"搜索流式输出中... 已发现 {len(self.results)} 个结果")
 
+    def on_search_status(self, msg):
+        self.progress_label.setText(msg)
+
     def on_search_finished(self, sorted_results):
+        self.is_searching = False
         self.results = sorted_results
         self.table.setRowCount(0)
         self.table.setRowCount(len(self.results))
@@ -231,11 +261,15 @@ class DownloadDialog(QDialog):
             self.table.setItem(row, 2, QTableWidgetItem(item.get("latestChapter", "")))
             self.table.setItem(row, 3, QTableWidgetItem(item.get("sourceName", "未知")))
             
-        self.progress_label.setText(f"搜索完成，共找到 {len(self.results)} 个结果。")
+        if self.search_worker and self.search_worker.cancel_event.is_set():
+            self.progress_label.setText("搜索已由用户手动取消。")
+        else:
+            self.progress_label.setText(f"搜索完成，共找到 {len(self.results)} 个可用结果。")
         self.search_btn.setEnabled(True)
         self.search_btn.setText("搜索")
 
     def on_search_error(self, err_msg):
+        self.is_searching = False
         self.progress_label.setText(f"搜索出错: {err_msg}")
         self.search_btn.setEnabled(True)
         self.search_btn.setText("搜索")
