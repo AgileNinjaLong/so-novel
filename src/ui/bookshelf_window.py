@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QFont, QIcon, QDragEnterEvent, QDropEvent, QKeySequence
 
 from src.core.config import ConfigManager
+from src.core.db_manager import DatabaseManager
 from src.core.sonovel_client import SoNovelClient
 from src.core.parser import NovelParser
 from src.core.version import __version__, FULL_VERSION_STRING, RELEASE_DATE
@@ -298,6 +299,7 @@ class BookshelfWindow(QMainWindow):
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
         self.config_manager = config_manager
+        self.db_manager = DatabaseManager()
         self._client = None  # 延迟加载 SoNovelClient，提升启动速度
         self.active_reading_windows = {}  # file_path -> stealth_window
         self.download_tasks = {}          # task_id -> task_info
@@ -320,6 +322,127 @@ class BookshelfWindow(QMainWindow):
 
         self.init_system_tray(icon_path)
         self.init_ui()
+        self.load_download_tasks_from_db()
+
+    def load_download_tasks_from_db(self):
+        """启动时从 SQLite 数据库恢复并落库展现所有历史下载任务"""
+        tasks = self.db_manager.get_all_tasks()
+        for t in tasks:
+            task_id = t["task_id"]
+            book_title = t.get("book_title", "未知")
+            author_name = t.get("author", "未知")
+            export_mode = t.get("export_mode", "epub")
+            save_path = t.get("save_path", "")
+            status = t.get("status", "COMPLETED")
+            status_text = t.get("status_text", "✅ 已完成")
+            progress_current = t.get("progress_current", 0)
+            progress_total = t.get("progress_total", 0)
+            book_info = t.get("book_info", {})
+
+            t_row = self.task_table.rowCount()
+            self.task_table.insertRow(t_row)
+
+            title_item = QTableWidgetItem(f"{book_title} ({author_name})")
+            title_item.setData(Qt.ItemDataRole.UserRole, task_id)
+            title_item.setData(Qt.ItemDataRole.UserRole + 1, t.get("url", ""))
+            self.task_table.setItem(t_row, 0, title_item)
+            self.task_table.setItem(t_row, 1, QTableWidgetItem(export_mode.upper()))
+
+            pbar = QProgressBar()
+            if progress_total > 0:
+                pbar.setMaximum(progress_total)
+                pbar.setValue(progress_current)
+            else:
+                pbar.setValue(100 if status == "COMPLETED" else 0)
+            self.task_table.setCellWidget(t_row, 2, pbar)
+
+            st_item = QTableWidgetItem(status_text)
+            if status == "COMPLETED":
+                st_item.setForeground(QColor("#2E7D32"))
+            elif status in ("CANCELLED", "ERROR"):
+                st_item.setForeground(QColor("#888888" if status == "CANCELLED" else "#C62828"))
+            self.task_table.setItem(t_row, 3, st_item)
+
+            btn_box = QWidget()
+            btn_layout = QHBoxLayout(btn_box)
+            btn_layout.setContentsMargins(2, 2, 2, 2)
+            btn_layout.setSpacing(6)
+
+            action_btn = QPushButton()
+            action_btn.setFixedWidth(70)
+            action_btn.setFixedHeight(26)
+
+            if status == "COMPLETED":
+                action_btn.setText("✅ 完成")
+                action_btn.setEnabled(False)
+                action_btn.setStyleSheet("background-color: #2E7D32; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
+            elif status == "CANCELLED":
+                action_btn.setText("重试")
+                action_btn.setEnabled(True)
+                action_btn.setStyleSheet("background-color: #0288D1; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
+                action_btn.clicked.connect(lambda _, tid=task_id: self.retry_download_task(tid))
+            elif status == "ERROR":
+                action_btn.setText("重试")
+                action_btn.setEnabled(True)
+                action_btn.setStyleSheet("background-color: #0288D1; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
+                action_btn.clicked.connect(lambda _, tid=task_id: self.retry_download_task(tid))
+            else: # DOWNLOADING / PENDING
+                st_item.setText("⏸️ 上次未完成")
+                action_btn.setText("重新下载")
+                action_btn.setEnabled(True)
+                action_btn.setStyleSheet("background-color: #0288D1; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
+                action_btn.clicked.connect(lambda _, tid=task_id: self.retry_download_task(tid))
+
+            del_btn = QPushButton("🗑️ 清除")
+            del_btn.setFixedWidth(70)
+            del_btn.setFixedHeight(26)
+            del_btn.setStyleSheet("background-color: #555555; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
+            del_btn.clicked.connect(lambda _, tid=task_id: self.remove_download_task(tid))
+
+            btn_layout.addWidget(action_btn)
+            btn_layout.addWidget(del_btn)
+            self.task_table.setCellWidget(t_row, 4, btn_box)
+
+            self.download_tasks[task_id] = {
+                "worker": None, "row": t_row, "save_path": save_path,
+                "title": book_title, "author": author_name, "mode": export_mode,
+                "url": t.get("url", ""), "source_name": t.get("source_name", "未知"),
+                "pbar": pbar, "st_item": st_item, "btn": action_btn, "del_btn": del_btn,
+                "book_info": book_info
+            }
+
+        self.tabs.setTabText(2, f"📥 下载管理 ({len(self.download_tasks)})")
+
+    def retry_download_task(self, task_id: str):
+        if task_id in self.download_tasks:
+            info = self.download_tasks[task_id]
+            book_info = info.get("book_info", {})
+            save_path = info.get("save_path", "")
+            export_mode = info.get("mode", "epub")
+            if not book_info or not book_info.get("url"):
+                QMessageBox.warning(self, "重试提示", "未能恢复该任务的书源配置信息。")
+                return
+
+            info["btn"].setText("❌ 取消")
+            info["btn"].setEnabled(True)
+            info["btn"].setStyleSheet("background-color: #C62828; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
+            try: info["btn"].clicked.disconnect()
+            except Exception: pass
+            info["btn"].clicked.connect(lambda _, tid=task_id: self.cancel_download_task(tid))
+
+            info["st_item"].setText("⏳ 重新准备下载...")
+            info["st_item"].setForeground(QColor("#FFFFFF"))
+
+            worker = DownloadWorker(self.client, task_id, book_info, save_path, export_mode=export_mode)
+            info["worker"] = worker
+
+            worker.progress_signal.connect(self.on_task_progress)
+            worker.finished_signal.connect(self.on_task_finished)
+            worker.error_signal.connect(self.on_task_error)
+            worker.cancelled_signal.connect(self.on_task_cancelled)
+            worker.start()
+
+            self.db_manager.update_task_status(task_id, "DOWNLOADING", "⏳ 重新准备下载...")
 
     @property
     def client(self):
@@ -965,6 +1088,7 @@ class BookshelfWindow(QMainWindow):
         
         title_item = QTableWidgetItem(f"{book_title} ({author_name})")
         title_item.setData(Qt.ItemDataRole.UserRole, task_id)
+        title_item.setData(Qt.ItemDataRole.UserRole + 1, book_info.get("url", ""))
         self.task_table.setItem(t_row, 0, title_item)
         self.task_table.setItem(t_row, 1, QTableWidgetItem(export_mode.upper()))
         
@@ -999,8 +1123,28 @@ class BookshelfWindow(QMainWindow):
         self.download_tasks[task_id] = {
             "worker": worker, "row": t_row, "save_path": save_path,
             "title": book_title, "author": author_name, "mode": export_mode,
-            "pbar": pbar, "st_item": st_item, "btn": cancel_btn, "del_btn": del_btn
+            "url": book_info.get("url", ""), "source_name": book_info.get("sourceName", "未知"),
+            "pbar": pbar, "st_item": st_item, "btn": cancel_btn, "del_btn": del_btn,
+            "book_info": book_info
         }
+
+        # SQLite 数据库落库
+        task_data = {
+            "task_id": task_id,
+            "book_title": book_title,
+            "author": author_name,
+            "url": book_info.get("url", ""),
+            "source_name": book_info.get("sourceName", "未知"),
+            "export_mode": export_mode,
+            "save_path": save_path,
+            "status": "DOWNLOADING",
+            "status_text": "⏳ 准备下载...",
+            "progress_current": 0,
+            "progress_total": 0,
+            "rule": book_info.get("rule", {}),
+            "book_info": book_info
+        }
+        self.db_manager.add_or_update_task(task_data)
 
         worker.progress_signal.connect(self.on_task_progress)
         worker.finished_signal.connect(self.on_task_finished)
@@ -1014,14 +1158,15 @@ class BookshelfWindow(QMainWindow):
     def cancel_download_task(self, task_id: str):
         if task_id in self.download_tasks:
             info = self.download_tasks[task_id]
-            info["worker"].cancel()
+            if info.get("worker"):
+                info["worker"].cancel()
             info["st_item"].setText("正在打断连接...")
             info["btn"].setEnabled(False)
 
     def remove_download_task(self, task_id: str):
         if task_id in self.download_tasks:
             info = self.download_tasks[task_id]
-            if "worker" in info and hasattr(info["worker"], "cancel"):
+            if "worker" in info and info["worker"] and hasattr(info["worker"], "cancel"):
                 worker = info["worker"]
                 try: worker.progress_signal.disconnect()
                 except Exception: pass
@@ -1034,6 +1179,7 @@ class BookshelfWindow(QMainWindow):
                 worker.cancel()
                 
             del self.download_tasks[task_id]
+            self.db_manager.delete_task(task_id)
 
             # 延迟到下一个事件循环处理 removeRow，避免在 del_btn 自身的 clicked 事件句柄中同步销毁 del_btn 导致 Qt 事件循环死锁/卡顿
             def _remove_row():
@@ -1054,6 +1200,7 @@ class BookshelfWindow(QMainWindow):
             if total > 0:
                 info["pbar"].setMaximum(total)
                 info["pbar"].setValue(current)
+            self.db_manager.update_task_progress(task_id, status_text, current, total)
 
     def on_task_finished(self, task_id: str, save_path: str):
         if task_id in self.download_tasks:
@@ -1066,6 +1213,8 @@ class BookshelfWindow(QMainWindow):
             info["btn"].setFixedHeight(26)
             info["btn"].setStyleSheet("background-color: #2E7D32; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
             
+            self.db_manager.update_task_status(task_id, "COMPLETED", "✅ 已自动入库我的藏书")
+
             # 自动登记到 ConfigManager 藏书库
             self.config_manager.add_to_bookshelf(save_path, {
                 "title": info["title"], "author": info["author"], "format": info["mode"]
@@ -1082,17 +1231,27 @@ class BookshelfWindow(QMainWindow):
             info["btn"].setFixedWidth(70)
             info["btn"].setFixedHeight(26)
             info["btn"].setStyleSheet("background-color: #0288D1; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
+            try: info["btn"].clicked.disconnect()
+            except Exception: pass
+            info["btn"].clicked.connect(lambda _, tid=task_id: self.retry_download_task(tid))
+
+            self.db_manager.update_task_status(task_id, "ERROR", f"❌ 错误: {err_msg}")
 
     def on_task_cancelled(self, task_id: str):
         if task_id in self.download_tasks:
             info = self.download_tasks[task_id]
             info["st_item"].setText("⛔ 已手动取消")
             info["st_item"].setForeground(QColor("#888888"))
-            info["btn"].setText("已取消")
-            info["btn"].setEnabled(False)
+            info["btn"].setText("重试")
+            info["btn"].setEnabled(True)
             info["btn"].setFixedWidth(70)
             info["btn"].setFixedHeight(26)
-            info["btn"].setStyleSheet("background-color: #888888; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
+            info["btn"].setStyleSheet("background-color: #0288D1; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
+            try: info["btn"].clicked.disconnect()
+            except Exception: pass
+            info["btn"].clicked.connect(lambda _, tid=task_id: self.retry_download_task(tid))
+
+            self.db_manager.update_task_status(task_id, "CANCELLED", "⛔ 已手动取消")
 
     # ====== 系统设置页 =====
     def save_settings_tab(self):

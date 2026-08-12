@@ -2,6 +2,7 @@ import datetime
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTextEdit, QVBoxLayout
 from PyQt6.QtGui import QFont, QWheelEvent, QKeyEvent, QMouseEvent, QContextMenuEvent
+from src.ui.base_window import BaseStealthWindow
 
 class LogTextEdit(QTextEdit):
     def __init__(self, parent_view=None, *args, **kwargs):
