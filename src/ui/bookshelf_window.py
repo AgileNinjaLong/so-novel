@@ -655,8 +655,37 @@ class BookshelfWindow(QMainWindow):
             path = title_item.data(Qt.ItemDataRole.UserRole)
             if path: self.start_reading(path)
 
+    def copy_file_to_downloads(self, src_path: str) -> str:
+        """自动将外部导入的小说复制一份存放于项目根目录 downloads/ 文件夹中"""
+        import shutil
+        src_path = os.path.abspath(src_path)
+        os.makedirs(DEFAULT_DOWNLOAD_DIR, exist_ok=True)
+        
+        try:
+            if os.path.commonpath([src_path, os.path.abspath(DEFAULT_DOWNLOAD_DIR)]) == os.path.abspath(DEFAULT_DOWNLOAD_DIR):
+                return src_path
+        except Exception:
+            pass
+
+        filename = os.path.basename(src_path)
+        dest_path = os.path.join(DEFAULT_DOWNLOAD_DIR, filename)
+        
+        if os.path.exists(dest_path) and os.path.abspath(dest_path) != src_path:
+            name_without_ext, ext = os.path.splitext(filename)
+            dest_path = os.path.join(DEFAULT_DOWNLOAD_DIR, f"{name_without_ext}_{int(time.time())}{ext}")
+            
+        try:
+            if os.path.isdir(src_path):
+                shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src_path, dest_path)
+            return dest_path
+        except Exception:
+            return src_path
+
     def start_reading(self, file_path: str):
         """开启摸鱼阅读：主界面保持显示不隐藏，支持同时打开多本小说"""
+        file_path = os.path.abspath(file_path)
         if not os.path.exists(file_path):
             QMessageBox.warning(self, "文件丢失", f"找不到小说文件：\n{file_path}")
             self.config_manager.remove_from_bookshelf(file_path)
@@ -669,7 +698,7 @@ class BookshelfWindow(QMainWindow):
         # 检查是否已在活动摸鱼窗口池中
         if file_path in self.active_reading_windows:
             win = self.active_reading_windows[file_path]
-            if win and not win.is_boss_hidden:
+            if win and hasattr(win, 'is_boss_hidden') and not win.is_boss_hidden:
                 win.show()
                 win.raise_()
                 win.activateWindow()
@@ -677,15 +706,17 @@ class BookshelfWindow(QMainWindow):
 
         mode = self.config_manager.settings.get("mode", "floating")
         if mode == "ide_pseudo":
-            from src.ui.ide_pseudo_view import IdePseudoView
-            win = IdePseudoView(self.config_manager, file_path=file_path, bookshelf_window=self)
+            from src.ui.ide_pseudo_view import IDEPseudoView
+            win = IDEPseudoView(self.config_manager, bookshelf_window=self)
         elif mode == "cad_pseudo":
-            from src.ui.cad_pseudo_view import CadPseudoView
-            win = CadPseudoView(self.config_manager, file_path=file_path, bookshelf_window=self)
+            from src.ui.cad_pseudo_view import CADPseudoView
+            win = CADPseudoView(self.config_manager, bookshelf_window=self)
         else:
             from src.ui.floating_view import FloatingView
-            win = FloatingView(self.config_manager, file_path=file_path, bookshelf_window=self)
+            win = FloatingView(self.config_manager, bookshelf_window=self)
 
+        # 触发加载并渲染小说文本
+        win.load_file(file_path)
         self.active_reading_windows[file_path] = win
         win.show()
 
@@ -696,10 +727,13 @@ class BookshelfWindow(QMainWindow):
     def do_import_local_book(self):
         files, _ = QFileDialog.getOpenFileNames(self, "选择本地小说文件导入书架", "", "Novel Files (*.txt *.epub);;All Files (*)")
         if files:
+            imported_count = 0
             for f in files:
-                self.config_manager.add_to_bookshelf(f)
+                target_path = self.copy_file_to_downloads(f)
+                self.config_manager.add_to_bookshelf(target_path)
+                imported_count += 1
             self.refresh_bookshelf()
-            QMessageBox.information(self, "导入成功", f"已成功导入 {len(files)} 本小说！")
+            QMessageBox.information(self, "导入成功", f"已成功将 {imported_count} 本小说保存至根目录 downloads/ 并加入书架！")
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls(): event.acceptProposedAction()
@@ -710,11 +744,12 @@ class BookshelfWindow(QMainWindow):
         for url in urls:
             f = url.toLocalFile()
             if os.path.exists(f) and (f.endswith('.txt') or f.endswith('.epub') or os.path.isdir(f)):
-                self.config_manager.add_to_bookshelf(f)
+                target_path = self.copy_file_to_downloads(f)
+                self.config_manager.add_to_bookshelf(target_path)
                 count += 1
         if count > 0:
             self.refresh_bookshelf()
-            QMessageBox.information(self, "拖拽导入成功", f"已成功添加 {count} 本小说到您的书架！")
+            QMessageBox.information(self, "拖拽导入成功", f"已自动将 {count} 本小说复制入库至根目录 downloads/ 文件夹中！")
 
     # ====== 搜书逻辑 =====
     def setup_connectivity_view(self):

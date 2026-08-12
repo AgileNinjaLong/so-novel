@@ -24,8 +24,8 @@ class CADCommandLineEdit(QTextEdit):
         self.parent_view.keyPressEvent(event)
 
 class CADPseudoView(BaseStealthWindow):
-    def __init__(self, config_manager, parent=None):
-        super().__init__(config_manager, parent)
+    def __init__(self, config_manager, parent=None, bookshelf_window=None):
+        super().__init__(config_manager, parent=parent, bookshelf_window=bookshelf_window)
         self.init_ui()
 
     def get_line_length(self) -> int:
