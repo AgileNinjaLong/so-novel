@@ -84,6 +84,19 @@ class DownloadWorker(QObject):
                     if completed % 10 == 0 or completed == total:
                         self.progress_signal.emit(completed, total, f"极速下载中: {completed}/{total} 章")
 
+            # 针对少量因网络抖动或代理限制下载失败的章节，进行二次串行精准补下载
+            failed_indices = [i for i, c in enumerate(chapter_contents) if not c or "下载失败" in c or "解析失败" in c]
+            if failed_indices:
+                self.progress_signal.emit(total, total, f"检测到 {len(failed_indices)} 章超时，正在自动重试补全...")
+                for idx in failed_indices:
+                    chap = toc[idx]
+                    try:
+                        res = self.client.download_chapter(chap["url"], rule)
+                        if "下载失败" not in res and "解析失败" not in res:
+                            chapter_contents[idx] = res
+                    except Exception:
+                        pass
+
             self.progress_signal.emit(total, total, "下载完毕，正在合并保存...")
 
             with open(self.save_path, "w", encoding="utf-8") as f:

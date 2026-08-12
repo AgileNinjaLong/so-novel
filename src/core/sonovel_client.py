@@ -273,8 +273,28 @@ class SoNovelClient:
 
         while current_url and current_url not in visited:
             visited.add(current_url)
+            resp = None
+            # 自动重试机制（最多重试3次）
+            for attempt in range(3):
+                try:
+                    resp = self.session.get(current_url, timeout=12)
+                    if resp.status_code == 200:
+                        break
+                except Exception:
+                    if attempt < 2:
+                        import time
+                        time.sleep(0.5 * (attempt + 1))
+                    else:
+                        # 尝试直连旁路重试（绕过本地可能拥堵的 127.0.0.1 代理）
+                        try:
+                            resp = requests.get(current_url, headers=self.headers, timeout=12, proxies={"http": None, "https": None})
+                        except Exception:
+                            pass
+
+            if not resp or resp.status_code != 200:
+                return "(本章下载失败，请稍后重新下载)"
+
             try:
-                resp = self.session.get(current_url, timeout=10)
                 if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                     resp.encoding = resp.apparent_encoding
                 
@@ -330,7 +350,7 @@ class SoNovelClient:
                         current_url = next_url
                         continue
                 break
-            except Exception as e:
-                return f"下载章节异常: {e}"
+            except Exception:
+                return "(本章解析失败)"
                 
-        return "\n".join(content_parts)
+        return "\n".join(content_parts) if content_parts else "(本章暂无内容)"
