@@ -46,3 +46,19 @@ def test_txt_parser_without_chapters():
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+def test_epub_builder(tmp_path):
+    from src.core.epub_builder import EpubBuilder
+    output_epub = str(tmp_path / "test_book.epub")
+    chapters = [
+        {"title": "第一章 序幕", "content": "这里是第一章的内容。"},
+        {"title": "第二章 展开", "content": "这里是第二章的内容。"}
+    ]
+    EpubBuilder.build_epub("测试书名", "测试作者", chapters, output_epub)
+    
+    # 验证生成的 EPUB 可用 EpubParser 成功解析
+    from src.core.parser import EpubParser
+    book = EpubParser.parse(output_epub)
+    assert book.title == "测试书名"
+    assert len(book.chapters) == 2
+    assert "第一章" in book.chapters[0].title

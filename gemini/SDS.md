@@ -134,6 +134,46 @@ class Book:
 }
 ```
 
+### 3.4 SoNovel 聚合抓取引擎与多格式导出合成 (SoNovel Aggregator & Exporters)
+
+```
+                       +-----------------------------+
+                       |   SoNovelClient Search UI   |
+                       +-----------------------------+
+                                      |
+                     +---------------------------------+
+                     |   SoNovelClient.search()        |
+                     |  (ThreadPoolExecutor max=15)    |
+                     +---------------------------------+
+                                      |
+                     +---------------------------------+
+                     | Stable Sorting Engine           |
+                     | (Score DESC > Source > Name)    |
+                     +---------------------------------+
+                                      |
+                     +---------------------------------+
+                     | DownloadWorker (Multi-threaded) |
+                     +---------------------------------+
+                                      |
+             +------------------------+------------------------+
+             |                        |                        |
+             v                        v                        v
+    +-----------------+      +------------------+     +------------------+
+    | TXT Single File |      | EPUB Builder     |     | Multi-Chapter    |
+    | (Merged Text)   |      | (ZipContainer)   |     | Directory (.txt) |
+    +-----------------+      +------------------+     +------------------+
+```
+
+1. **确定性稳定排序引擎 (Deterministic Search Ranking Engine)**：
+   * 为了解决多线程异步返回导致搜书列表两次搜索顺序不一致问题，建立三元组排序函数：
+     `Score = ratio * 1000 - source_priority_weight`
+   * 在搜索流式吐出和最终 `on_search_finished` 中，统一基于（相似度得分 > 规则权重 > 书源名称）进行 `stable_sort` 归一化处理。
+
+2. **多格式合成器 (`EpubBuilder` & `MultiFileExporter`)**：
+   * **TXT 单文件模式**：拼接全局纯文本带章节分界符。
+   * **EPUB 电子书模式**：原生产生 `mimetype`, `META-INF/container.xml`, `OEBPS/content.opf`, `OEBPS/toc.ncx` 及 XHTML 章节模板，使用 `zipfile.ZipFile` 打包压制成标准 `.epub` 电子书。
+   * **章节独立拆分模式**：在指定保存目录下创建小说同名文件夹，按照 `0001_第1章.txt` 顺序离散落盘。
+
 ---
 
 ## 4. 目录与代码结构规划

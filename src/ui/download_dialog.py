@@ -36,11 +36,12 @@ class DownloadWorker(QObject):
     finished_signal = pyqtSignal(str)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, client: SoNovelClient, book_info: dict, save_path: str):
+    def __init__(self, client: SoNovelClient, book_info: dict, save_path: str, export_mode: str = "txt"):
         super().__init__()
         self.client = client
         self.book_info = book_info
         self.save_path = save_path
+        self.export_mode = export_mode  # 'txt', 'epub', 'dir'
 
     def start(self):
         import threading
@@ -50,6 +51,8 @@ class DownloadWorker(QObject):
         try:
             rule = self.book_info["rule"]
             book_url = self.book_info["url"]
+            book_name = self.book_info.get("bookName", "未知书名")
+            author = self.book_info.get("author", "未知作者")
             
             # 1. 获取目录
             self.progress_signal.emit(0, 0, "正在获取目录...")
@@ -97,15 +100,32 @@ class DownloadWorker(QObject):
                     except Exception:
                         pass
 
-            self.progress_signal.emit(total, total, "下载完毕，正在合并保存...")
+            self.progress_signal.emit(total, total, "下载完毕，正在按所选模式合成落盘...")
 
-            with open(self.save_path, "w", encoding="utf-8") as f:
+            # 2. 根据所选 export_mode 进行多样化合成落盘
+            if self.export_mode == "epub":
+                from src.core.epub_builder import EpubBuilder
+                chapters_data = [
+                    {"title": chap["title"], "content": chapter_contents[idx] or ""}
+                    for idx, chap in enumerate(toc)
+                ]
+                EpubBuilder.build_epub(book_name, author, chapters_data, self.save_path)
+            elif self.export_mode == "dir":
+                target_dir = self.save_path
+                os.makedirs(target_dir, exist_ok=True)
                 for idx, chap in enumerate(toc):
-                    f.write(f"\n\n{chap['title']}\n\n{chapter_contents[idx]}\n")
+                    safe_chap_title = re.sub(r'[\\/:*?"<>|]', '_', chap['title'])
+                    chap_file_path = os.path.join(target_dir, f"{idx+1:04d}_{safe_chap_title}.txt")
+                    with open(chap_file_path, "w", encoding="utf-8") as f:
+                        f.write(f"{chap['title']}\n\n{chapter_contents[idx] or ''}\n")
+            else: # txt
+                with open(self.save_path, "w", encoding="utf-8") as f:
+                    for idx, chap in enumerate(toc):
+                        f.write(f"\n\n{chap['title']}\n\n{chapter_contents[idx] or ''}\n")
 
             self.finished_signal.emit(self.save_path)
         except Exception as e:
-            self.error_signal.emit(f"下载发生异常: {str(e)}")
+            self.error_signal.emit(f"下载合并发生异常: {str(e)}")
 
 
 class DownloadDialog(QDialog):
@@ -155,10 +175,21 @@ class DownloadDialog(QDialog):
         layout.addWidget(self.progress_label)
         layout.addWidget(self.progress_bar)
 
-        # 下载按钮
+        # 底部操作控制区
+        bottom_layout = QHBoxLayout()
+        from PyQt6.QtWidgets import QComboBox
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("📄 单文件 TXT (合并文本)", "txt")
+        self.mode_combo.addItem("📚 EPUB 电子书 (标准打包)", "epub")
+        self.mode_combo.addItem("📂 按章节拆分目录 (离散文件)", "dir")
+        
         self.download_btn = QPushButton("📥 下载选中的小说")
         self.download_btn.clicked.connect(self.do_download)
-        layout.addWidget(self.download_btn)
+        
+        bottom_layout.addWidget(QLabel("合成模式:"))
+        bottom_layout.addWidget(self.mode_combo)
+        bottom_layout.addWidget(self.download_btn)
+        layout.addLayout(bottom_layout)
 
         self.results = []
 
@@ -217,22 +248,26 @@ class DownloadDialog(QDialog):
 
         row = selected[0].row()
         book_info = self.results[row]
-        default_filename = f"{book_info.get('bookName', '未知')}_{book_info.get('author', '未知')}.txt"
+        export_mode = self.mode_combo.currentData() or "txt"
 
-        # 默认下载目录为当前执行目录下的 download 文件夹
         app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         default_download_dir = os.path.join(app_dir, "download")
         os.makedirs(default_download_dir, exist_ok=True)
-        
-        default_save_path = os.path.join(default_download_dir, default_filename)
 
-        # 允许用户选择合成文件名及保存路径
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, 
-            "选择下载保存路径", 
-            default_save_path, 
-            "Text Files (*.txt);;All Files (*)"
-        )
+        if export_mode == "epub":
+            filter_str = "EPUB Files (*.epub);;All Files (*)"
+            default_filename = f"{book_info.get('bookName', '未知')}_{book_info.get('author', '未知')}.epub"
+            default_save_path = os.path.join(default_download_dir, default_filename)
+            save_path, _ = QFileDialog.getSaveFileName(self, "选择 EPUB 保存路径", default_save_path, filter_str)
+        elif export_mode == "dir":
+            default_filename = f"{book_info.get('bookName', '未知')}_{book_info.get('author', '未知')}"
+            default_save_path = os.path.join(default_download_dir, default_filename)
+            save_path = QFileDialog.getExistingDirectory(self, "选择保存文件夹目录", default_save_path)
+        else:
+            filter_str = "Text Files (*.txt);;All Files (*)"
+            default_filename = f"{book_info.get('bookName', '未知')}_{book_info.get('author', '未知')}.txt"
+            default_save_path = os.path.join(default_download_dir, default_filename)
+            save_path, _ = QFileDialog.getSaveFileName(self, "选择 TXT 保存路径", default_save_path, filter_str)
 
         if not save_path:
             return  # 用户取消
@@ -241,7 +276,7 @@ class DownloadDialog(QDialog):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         
-        self.download_worker = DownloadWorker(self.client, book_info, save_path)
+        self.download_worker = DownloadWorker(self.client, book_info, save_path, export_mode=export_mode)
         self.download_worker.progress_signal.connect(self.on_download_progress)
         self.download_worker.finished_signal.connect(self.on_download_finished)
         self.download_worker.error_signal.connect(self.on_download_error)

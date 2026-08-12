@@ -1,0 +1,337 @@
+{
+  "SoNovel/rules/cloudflare.json": {
+    "mtime": 1782856366.0,
+    "ast_hash": "413a8e266e395bce8857e4cbebdfa737",
+    "semantic_hash": "413a8e266e395bce8857e4cbebdfa737"
+  },
+  "SoNovel/rules/main.json": {
+    "mtime": 1782856366.0,
+    "ast_hash": "1974249f48bb7672d50f1fd550838b33",
+    "semantic_hash": "1974249f48bb7672d50f1fd550838b33"
+  },
+  "SoNovel/rules/no-search.json": {
+    "mtime": 1782856366.0,
+    "ast_hash": "43877f7ea9ed42f73403b42500927eae",
+    "semantic_hash": "43877f7ea9ed42f73403b42500927eae"
+  },
+  "SoNovel/rules/proxy-required.json": {
+    "mtime": 1782856366.0,
+    "ast_hash": "4e8383e42213da359def909cde196648",
+    "semantic_hash": "4e8383e42213da359def909cde196648"
+  },
+  "SoNovel/rules/rate-limit.json": {
+    "mtime": 1782856366.0,
+    "ast_hash": "f56798572108d1a8eaa28261fbdc42bd",
+    "semantic_hash": "f56798572108d1a8eaa28261fbdc42bd"
+  },
+  "download_demo.py": {
+    "mtime": 1786332847.3607156,
+    "ast_hash": "f8c7df034ea61522fce8b15701ac857f",
+    "semantic_hash": "f8c7df034ea61522fce8b15701ac857f"
+  },
+  "src/__init__.py": {
+    "mtime": 1785840992.971028,
+    "ast_hash": "90bde422e8b2a83bd7440495cb6fc5e9",
+    "semantic_hash": "90bde422e8b2a83bd7440495cb6fc5e9"
+  },
+  "src/core/__init__.py": {
+    "mtime": 1785840992.9874918,
+    "ast_hash": "a5c5bc6427d1a4138233756d209889c3",
+    "semantic_hash": "a5c5bc6427d1a4138233756d209889c3"
+  },
+  "src/core/book.py": {
+    "mtime": 1785841998.9813573,
+    "ast_hash": "a7af7fc8aa1f45737ac13e14b30af746",
+    "semantic_hash": "a7af7fc8aa1f45737ac13e14b30af746"
+  },
+  "src/core/config.py": {
+    "mtime": 1786435108.503036,
+    "ast_hash": "f3c3e4bcaff554e9737b5c519fc1b895",
+    "semantic_hash": "f3c3e4bcaff554e9737b5c519fc1b895"
+  },
+  "src/core/parser.py": {
+    "mtime": 1785843233.884217,
+    "ast_hash": "077c64abf1353756e88acd006b8a781a",
+    "semantic_hash": "077c64abf1353756e88acd006b8a781a"
+  },
+  "src/core/sonovel_client.py": {
+    "mtime": 1786501211.1797445,
+    "ast_hash": "028547259780414b8892b9d9fcbb4592",
+    "semantic_hash": "028547259780414b8892b9d9fcbb4592"
+  },
+  "src/main.py": {
+    "mtime": 1786066840.1815538,
+    "ast_hash": "e0a5125a57cd204e9be1b475c9aac85c",
+    "semantic_hash": "e0a5125a57cd204e9be1b475c9aac85c"
+  },
+  "src/ui/__init__.py": {
+    "mtime": 1785840993.0039775,
+    "ast_hash": "51b9b2ae32a75cc7241dedbb203f3579",
+    "semantic_hash": "51b9b2ae32a75cc7241dedbb203f3579"
+  },
+  "src/ui/base_window.py": {
+    "mtime": 1786435274.4955778,
+    "ast_hash": "54e0d988f38f3434b4aec272a7d7563a",
+    "semantic_hash": "54e0d988f38f3434b4aec272a7d7563a"
+  },
+  "src/ui/boss_key.py": {
+    "mtime": 1785842206.7789688,
+    "ast_hash": "67d0eb81438bd09b5cd2282658e8892c",
+    "semantic_hash": "67d0eb81438bd09b5cd2282658e8892c"
+  },
+  "src/ui/cad_pseudo_view.py": {
+    "mtime": 1786433967.2237928,
+    "ast_hash": "ec366c0e506589a251107243a65d7ea9",
+    "semantic_hash": "ec366c0e506589a251107243a65d7ea9"
+  },
+  "src/ui/chapter_dialog.py": {
+    "mtime": 1785842003.4989839,
+    "ast_hash": "96b467fc5895406f08191c843a97ded0",
+    "semantic_hash": "96b467fc5895406f08191c843a97ded0"
+  },
+  "src/ui/download_dialog.py": {
+    "mtime": 1786501229.4474435,
+    "ast_hash": "84165502143c4f96f52d9244eb09b717",
+    "semantic_hash": "84165502143c4f96f52d9244eb09b717"
+  },
+  "src/ui/floating_view.py": {
+    "mtime": 1786434660.4760947,
+    "ast_hash": "8e6f9966c1fe717118ecd62f22be872b",
+    "semantic_hash": "8e6f9966c1fe717118ecd62f22be872b"
+  },
+  "src/ui/ide_pseudo_view.py": {
+    "mtime": 1786433961.398847,
+    "ast_hash": "54ac91932c426132118d621047b93216",
+    "semantic_hash": "54ac91932c426132118d621047b93216"
+  },
+  "src/ui/settings_dialog.py": {
+    "mtime": 1786435115.355064,
+    "ast_hash": "991ca88a220c81e15362d2ecbd9e5951",
+    "semantic_hash": "991ca88a220c81e15362d2ecbd9e5951"
+  },
+  "src/utils/__init__.py": {
+    "mtime": 1785840993.018445,
+    "ast_hash": "727bde8b4cdf419d83d41fd062efd784",
+    "semantic_hash": "727bde8b4cdf419d83d41fd062efd784"
+  },
+  "src/utils/encoding.py": {
+    "mtime": 1785841148.3694077,
+    "ast_hash": "42c76cbe8fe9155643641902b5b3bd9e",
+    "semantic_hash": "42c76cbe8fe9155643641902b5b3bd9e"
+  },
+  "test_download.py": {
+    "mtime": 1786332223.518811,
+    "ast_hash": "1574ac20f7fb24b151c3db6c7b170917",
+    "semantic_hash": "1574ac20f7fb24b151c3db6c7b170917"
+  },
+  "tests/__init__.py": {
+    "mtime": 1785840993.0329466,
+    "ast_hash": "80b50258af3d3c07b7f850858b680ada",
+    "semantic_hash": "80b50258af3d3c07b7f850858b680ada"
+  },
+  "tests/run_tests.py": {
+    "mtime": 1785842237.2776127,
+    "ast_hash": "2118f73ffa43fbc3d8c8ff5808e57210",
+    "semantic_hash": "2118f73ffa43fbc3d8c8ff5808e57210"
+  },
+  "tests/test_config.py": {
+    "mtime": 1785842974.7572489,
+    "ast_hash": "37f867da3421d6740dee3d94c548b22e",
+    "semantic_hash": "37f867da3421d6740dee3d94c548b22e"
+  },
+  "tests/test_encoding.py": {
+    "mtime": 1785840999.313816,
+    "ast_hash": "21da173c28678741a0a3dcc017535520",
+    "semantic_hash": "21da173c28678741a0a3dcc017535520"
+  },
+  "tests/test_gui_mock.py": {
+    "mtime": 1786434674.6892135,
+    "ast_hash": "ea7c70140e7c05880acc58fda0fae88d",
+    "semantic_hash": "ea7c70140e7c05880acc58fda0fae88d"
+  },
+  "tests/test_parser.py": {
+    "mtime": 1785841010.1529047,
+    "ast_hash": "64d44ed3a0a03d62712833ec180497ff",
+    "semantic_hash": "64d44ed3a0a03d62712833ec180497ff"
+  },
+  "trace_freeze.py": {
+    "mtime": 1786339030.9818792,
+    "ast_hash": "1f1be73e643cc8c9bcc1a574d4c4772e",
+    "semantic_hash": "1f1be73e643cc8c9bcc1a574d4c4772e"
+  },
+  "README.md": {
+    "mtime": 1785841033.1944456,
+    "ast_hash": "be0ab06c272732e97d1fd8c965c45a66",
+    "semantic_hash": "be0ab06c272732e97d1fd8c965c45a66"
+  },
+  "SoNovel/readme.txt": {
+    "mtime": 1782856366.0,
+    "ast_hash": "80ee5e864af4466fbc44852b5d9a4e12",
+    "semantic_hash": "80ee5e864af4466fbc44852b5d9a4e12"
+  },
+  "SoNovel/runtime/conf/security/policy/README.txt": {
+    "mtime": 1752662238.0,
+    "ast_hash": "3d47d94bc4f19d18bcc8b23f51d013af",
+    "semantic_hash": "3d47d94bc4f19d18bcc8b23f51d013af"
+  },
+  "SoNovel/runtime/legal/java.base/aes.md": {
+    "mtime": 1752662240.0,
+    "ast_hash": "2e33468a535a4eb09ef57fc12a2652d0",
+    "semantic_hash": "2e33468a535a4eb09ef57fc12a2652d0"
+  },
+  "SoNovel/runtime/legal/java.base/asm.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "e309b23daf9ec1a7da314d747a8e179b",
+    "semantic_hash": "e309b23daf9ec1a7da314d747a8e179b"
+  },
+  "SoNovel/runtime/legal/java.base/c-libutl.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "2e89a282a50f8702e52703464e6937ca",
+    "semantic_hash": "2e89a282a50f8702e52703464e6937ca"
+  },
+  "SoNovel/runtime/legal/java.base/cldr.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "a17106722979c51fc6927d2cde977529",
+    "semantic_hash": "a17106722979c51fc6927d2cde977529"
+  },
+  "SoNovel/runtime/legal/java.base/icu.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "893878172c684b87cb5786faab835d8f",
+    "semantic_hash": "893878172c684b87cb5786faab835d8f"
+  },
+  "SoNovel/runtime/legal/java.base/public_suffix.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "516fba54f66223acb4e0e61b9c28d09a",
+    "semantic_hash": "516fba54f66223acb4e0e61b9c28d09a"
+  },
+  "SoNovel/runtime/legal/java.base/siphash.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "2e9741435c8abf33accc005f6ffe5aef",
+    "semantic_hash": "2e9741435c8abf33accc005f6ffe5aef"
+  },
+  "SoNovel/runtime/legal/java.base/unicode.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "077e8a75553aa98423349385dc93edb5",
+    "semantic_hash": "077e8a75553aa98423349385dc93edb5"
+  },
+  "SoNovel/runtime/legal/java.base/wepoll.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "cef1d92ff8ace278bd32ac5e18735b86",
+    "semantic_hash": "cef1d92ff8ace278bd32ac5e18735b86"
+  },
+  "SoNovel/runtime/legal/java.base/zlib.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "018777dc4651ac69c58d3facb3cdd1c0",
+    "semantic_hash": "018777dc4651ac69c58d3facb3cdd1c0"
+  },
+  "SoNovel/runtime/legal/java.desktop/colorimaging.md": {
+    "mtime": 1752662240.0,
+    "ast_hash": "0889fd01a6802a5a934572d9bd47f430",
+    "semantic_hash": "0889fd01a6802a5a934572d9bd47f430"
+  },
+  "SoNovel/runtime/legal/java.desktop/freetype.md": {
+    "mtime": 1752662238.0,
+    "ast_hash": "ae26a2557017aea21a14a4d1c492a164",
+    "semantic_hash": "ae26a2557017aea21a14a4d1c492a164"
+  },
+  "SoNovel/runtime/legal/java.desktop/giflib.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "af10c48601d024b36ed02f7ef098a05a",
+    "semantic_hash": "af10c48601d024b36ed02f7ef098a05a"
+  },
+  "SoNovel/runtime/legal/java.desktop/harfbuzz.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "22d1de36dcab5366ccee79c4e33d3a1f",
+    "semantic_hash": "22d1de36dcab5366ccee79c4e33d3a1f"
+  },
+  "SoNovel/runtime/legal/java.desktop/jpeg.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "3e68688d9331ac69296cf8fa57d7d2cb",
+    "semantic_hash": "3e68688d9331ac69296cf8fa57d7d2cb"
+  },
+  "SoNovel/runtime/legal/java.desktop/lcms.md": {
+    "mtime": 1752662238.0,
+    "ast_hash": "f7802ad99b0280dd6b69ffafea87cef6",
+    "semantic_hash": "f7802ad99b0280dd6b69ffafea87cef6"
+  },
+  "SoNovel/runtime/legal/java.desktop/libpng.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "c2f1fc23fced6739364bee85ddcba5f3",
+    "semantic_hash": "c2f1fc23fced6739364bee85ddcba5f3"
+  },
+  "SoNovel/runtime/legal/java.desktop/mesa3d.md": {
+    "mtime": 1752662238.0,
+    "ast_hash": "c7e0d19c8f4eff11e97f0eb9afd3f7f4",
+    "semantic_hash": "c7e0d19c8f4eff11e97f0eb9afd3f7f4"
+  },
+  "SoNovel/runtime/legal/java.xml.crypto/santuario.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "f1b6983f8bcb77ce3a2d8311a29b346b",
+    "semantic_hash": "f1b6983f8bcb77ce3a2d8311a29b346b"
+  },
+  "SoNovel/runtime/legal/java.xml/bcel.md": {
+    "mtime": 1752662238.0,
+    "ast_hash": "daae908a4dd474afec9c010d416acb2d",
+    "semantic_hash": "daae908a4dd474afec9c010d416acb2d"
+  },
+  "SoNovel/runtime/legal/java.xml/dom.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "13952c46b3867103ad7d1e9c6c9e906c",
+    "semantic_hash": "13952c46b3867103ad7d1e9c6c9e906c"
+  },
+  "SoNovel/runtime/legal/java.xml/jcup.md": {
+    "mtime": 1752662240.0,
+    "ast_hash": "d19594fbf6eab2242dc29257905d8ded",
+    "semantic_hash": "d19594fbf6eab2242dc29257905d8ded"
+  },
+  "SoNovel/runtime/legal/java.xml/xalan.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "91d5dfe3e1f8e51cc8c54f9920a18bcb",
+    "semantic_hash": "91d5dfe3e1f8e51cc8c54f9920a18bcb"
+  },
+  "SoNovel/runtime/legal/java.xml/xerces.md": {
+    "mtime": 1752662240.0,
+    "ast_hash": "a8d7dcf5540e0a20066ac48deae71c59",
+    "semantic_hash": "a8d7dcf5540e0a20066ac48deae71c59"
+  },
+  "SoNovel/runtime/legal/jdk.crypto.cryptoki/pkcs11cryptotoken.md": {
+    "mtime": 1752662238.0,
+    "ast_hash": "03799ce5e9611d7337650d7a9cef2196",
+    "semantic_hash": "03799ce5e9611d7337650d7a9cef2196"
+  },
+  "SoNovel/runtime/legal/jdk.crypto.cryptoki/pkcs11wrapper.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "b77d1951df7a8488eb84ce1d25486a14",
+    "semantic_hash": "b77d1951df7a8488eb84ce1d25486a14"
+  },
+  "SoNovel/runtime/legal/jdk.dynalink/dynalink.md": {
+    "mtime": 1752662240.0,
+    "ast_hash": "7c3773c14e9de1161a33902d64854bde",
+    "semantic_hash": "7c3773c14e9de1161a33902d64854bde"
+  },
+  "SoNovel/runtime/legal/jdk.localedata/cldr.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "34c921033bd4ea16d1f88a6206730aa0",
+    "semantic_hash": "34c921033bd4ea16d1f88a6206730aa0"
+  },
+  "SoNovel/runtime/legal/jdk.localedata/thaidict.md": {
+    "mtime": 1752662241.0,
+    "ast_hash": "2ea6eb55ca40902554aaf2fd20a76ba8",
+    "semantic_hash": "2ea6eb55ca40902554aaf2fd20a76ba8"
+  },
+  "gemini/SDS.md": {
+    "mtime": 1786066548.8819983,
+    "ast_hash": "276678b3a95512719086d89f92a3b568",
+    "semantic_hash": "276678b3a95512719086d89f92a3b568"
+  },
+  "gemini/SRS.md": {
+    "mtime": 1786066533.0889537,
+    "ast_hash": "8d952e67ab0ad24891869093723cd4f0",
+    "semantic_hash": "8d952e67ab0ad24891869093723cd4f0"
+  },
+  "requirements.txt": {
+    "mtime": 1786079560.2101393,
+    "ast_hash": "014e2feddc5ddf780b750614e303bc70",
+    "semantic_hash": "014e2feddc5ddf780b750614e303bc70"
+  }
+}

@@ -34,7 +34,7 @@ class SoNovelClient:
     def __init__(self, rules_dir: str = RULES_DIR):
         self.rules = []
         if os.path.exists(rules_dir) and os.path.isdir(rules_dir):
-            for file_name in os.listdir(rules_dir):
+            for file_name in sorted(os.listdir(rules_dir)):
                 if file_name.endswith('.json') and "template" not in file_name.lower():
                     full_path = os.path.join(rules_dir, file_name)
                     try:
@@ -45,6 +45,10 @@ class SoNovelClient:
                     except Exception as e:
                         print(f"Error loading rule file {file_name}: {e}")
         
+        # 赋予每一个规则固定的序号位次，用于确定性排序
+        for idx, r in enumerate(self.rules):
+            r['rule_index'] = idx
+
         self.session = requests.Session()
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -193,20 +197,28 @@ class SoNovelClient:
                 try:
                     res = future.result()
                     if res:
-                        if callback:
-                            for r in res:
-                                r['ratio'] = difflib.SequenceMatcher(None, keyword, r.get('bookName', '')).ratio()
+                        for r in res:
+                            r['ratio'] = difflib.SequenceMatcher(None, keyword, r.get('bookName', '')).ratio()
+                            r['rule_index'] = r.get('rule', {}).get('rule_index', 999)
+                            if callback:
                                 callback(r)
                         results.extend(res)
                 except Exception:
                     pass
-        
-        if not callback:
-            for r in results:
-                r['ratio'] = difflib.SequenceMatcher(None, keyword, r.get('bookName', '')).ratio()
-        
-        results.sort(key=lambda x: x['ratio'], reverse=True)
-        return results
+
+        # 确定性多维稳定排序：相似度降序 > 规则位次升序 > 书名升序 > 书源升序
+        results.sort(key=lambda x: (-round(x['ratio'], 3), x.get('rule_index', 999), x.get('bookName', ''), x.get('sourceName', '')))
+
+        # 稳定去重
+        seen_keys = set()
+        deduped = []
+        for r in results:
+            k = (r.get('bookName', ''), r.get('author', ''), r.get('sourceName', ''))
+            if k not in seen_keys:
+                seen_keys.add(k)
+                deduped.append(r)
+
+        return deduped
 
     def get_toc(self, book_url: str, rule: dict) -> List[Dict[str, str]]:
         toc_rule = rule.get("toc", {})
