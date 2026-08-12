@@ -271,6 +271,12 @@ class DownloadDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
 
     def do_search(self):
+        import time
+        now = time.time()
+        if hasattr(self, 'last_search_trigger_time') and now - self.last_search_trigger_time < 0.3:
+            return
+        self.last_search_trigger_time = now
+
         if getattr(self, 'is_searching', False):
             self.cancel_search()
             return
@@ -318,7 +324,7 @@ class DownloadDialog(QDialog):
         self.sort_connectivity_table()
 
     def sort_connectivity_table(self):
-        """将连通成功的书源实时向上置顶，并按延迟毫秒数升序排列，重建 rule_row_map 保证映射准确"""
+        """实时重新排序：连通成功(按延迟升序) > 连通失败 > 测试中(末尾)"""
         if getattr(self, 'table_view_mode', '') != "connectivity":
             return
         
@@ -334,7 +340,7 @@ class DownloadDialog(QDialog):
                 
             status_text = status_item.text()
             is_ok = "✅" in status_text
-            is_testing = "⏳" in status_text
+            is_failed = "❌" in status_text
             
             latency_val = 999999
             if is_ok and latency_item:
@@ -343,7 +349,8 @@ class DownloadDialog(QDialog):
                     latency_val = int(m.group())
                     
             r_idx = rule_idx_item.data(Qt.ItemDataRole.UserRole)
-            priority = 0 if is_ok else (1 if is_testing else 2)
+            # 优先级：0: 成功, 1: 失败, 2: 测试中 (按要求测试中排在最后)
+            priority = 0 if is_ok else (1 if is_failed else 2)
             rows_data.append((
                 priority, 
                 latency_val, 

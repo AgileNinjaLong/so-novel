@@ -205,7 +205,7 @@ class SoNovelClient:
         return results
 
     def test_rule_connectivity(self, rule: dict) -> tuple[bool, int]:
-        """对单本书源规则的目标 host 发起快速连通性响应测试 (5.0s 封顶超时)，返回 (is_ok, latency_ms)"""
+        """对单本书源规则的目标 host 发起快速连通性响应测试 (单次 2.5s 严格超时)，返回 (is_ok, latency_ms)"""
         if rule.get("disabled", False):
             return False, 0
         search_rule = rule.get("search", {})
@@ -218,17 +218,20 @@ class SoNovelClient:
         try:
             parsed = urllib.parse.urlparse(url)
             base_url = f"{parsed.scheme}://{parsed.netloc}"
-            resp = self.session.head(base_url, timeout=5.0, allow_redirects=True)
+            resp = self.session.head(base_url, timeout=2.5, allow_redirects=True)
             latency = int((time.time() - t0) * 1000)
+            if resp.status_code < 500:
+                return True, latency
+        except Exception:
+            pass
+
+        try:
+            t1 = time.time()
+            resp = self.session.get(url.replace('%s', 'test'), timeout=2.5)
+            latency = int((time.time() - t1) * 1000)
             return resp.status_code < 500, latency
         except Exception:
-            try:
-                t1 = time.time()
-                resp = self.session.get(url.replace('%s', 'test'), timeout=5.0)
-                latency = int((time.time() - t1) * 1000)
-                return resp.status_code < 500, latency
-            except Exception:
-                return False, 0
+            return False, 0
 
     def search(self, keyword: str, callback=None, status_callback=None, cancel_event=None, rule_tested_callback=None) -> List[Dict[str, Any]]:
         import concurrent.futures
