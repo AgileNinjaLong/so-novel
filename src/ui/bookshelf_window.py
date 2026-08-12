@@ -18,6 +18,7 @@ from PyQt6.QtGui import QColor, QFont, QIcon, QDragEnterEvent, QDropEvent, QKeyS
 from src.core.config import ConfigManager
 from src.core.sonovel_client import SoNovelClient
 from src.core.parser import NovelParser
+from src.core.version import __version__, FULL_VERSION_STRING, RELEASE_DATE
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_DOWNLOAD_DIR = os.path.join(ROOT_DIR, "downloads")
