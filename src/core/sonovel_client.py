@@ -205,7 +205,7 @@ class SoNovelClient:
         return results
 
     def test_rule_connectivity(self, rule: dict, cancel_event=None) -> tuple[bool, int]:
-        """对单本书源规则的目标 host 发起快速连通性响应测试 (单次 2.5s 严格超时)，返回 (is_ok, latency_ms)"""
+        """对单本书源规则的目标 host 发起快速连通性响应测试 (单次 3.0s 超时)，返回 (is_ok, latency_ms)"""
         if cancel_event and cancel_event.is_set():
             return False, 0
         if rule.get("disabled", False):
@@ -220,7 +220,7 @@ class SoNovelClient:
         try:
             parsed = urllib.parse.urlparse(url)
             base_url = f"{parsed.scheme}://{parsed.netloc}"
-            resp = self.session.head(base_url, timeout=2.5, allow_redirects=True)
+            resp = self.session.get(base_url, timeout=3.0, allow_redirects=True)
             latency = int((time.time() - t0) * 1000)
             if resp.status_code < 500:
                 return True, latency
@@ -232,7 +232,8 @@ class SoNovelClient:
 
         try:
             t1 = time.time()
-            resp = self.session.get(url.replace('%s', 'test'), timeout=2.5)
+            test_url = url.replace('%s', urllib.parse.quote('天'))
+            resp = self.session.get(test_url, timeout=3.0)
             latency = int((time.time() - t1) * 1000)
             return resp.status_code < 500, latency
         except Exception:
@@ -243,12 +244,13 @@ class SoNovelClient:
         import difflib
         import time
         
+        results = []
+        valid_rules = []
+        total_rules = len(self.rules)
+
         now = time.time()
         cache_age = now - self.connectivity_cache.get("timestamp", 0.0)
         is_cache_valid = (cache_age < 1800) and (not self.connectivity_cache.get("invalidated", False)) and bool(self.connectivity_cache.get("valid_rule_indices"))
-
-        valid_rules = []
-        total_rules = len(self.rules)
 
         if is_cache_valid:
             valid_indices = set(self.connectivity_cache.get("valid_rule_indices", []))
@@ -261,51 +263,90 @@ class SoNovelClient:
                     is_ok = r_idx in valid_indices
                     lat = self.connectivity_cache.get("details", {}).get(r_idx, {}).get("latency_ms", 100)
                     rule_tested_callback(r_idx, r.get('name', ''), is_ok, lat if is_ok else 0)
-        else:
-            # 阶段 1：高并发并行预检所有书源连通性 (不使用 with 语句，以便取消时瞬间 0ms 退出)
-            completed_count = 0
-            lock = threading.Lock()
-            details_cache = {}
-            
-            def _test_task(rule):
-                nonlocal completed_count
-                if cancel_event and cancel_event.is_set():
-                    return None
-                is_ok, latency_ms = self.test_rule_connectivity(rule, cancel_event=cancel_event)
-                r_idx = rule.get('rule_index', 999)
-                r_name = rule.get('name', '未知')
-                
-                details_cache[r_idx] = {"is_ok": is_ok, "latency_ms": latency_ms}
-                if rule_tested_callback and not (cancel_event and cancel_event.is_set()):
-                    rule_tested_callback(r_idx, r_name, is_ok, latency_ms)
 
-                with lock:
-                    completed_count += 1
-                    if status_callback and not (cancel_event and cancel_event.is_set()):
-                        status_callback(f"正在表格中并发测试书源连通性 [{completed_count}/{total_rules}] ...")
-                return rule if is_ok else None
-
-            if status_callback:
-                status_callback(f"开始对全量 {total_rules} 个书源发起表格嵌入式高并发预检...")
-
-            executor1 = concurrent.futures.ThreadPoolExecutor(max_workers=20)
+            # 阶段 2：在已验证书源上检索
+            search_executor = concurrent.futures.ThreadPoolExecutor(max_workers=15)
             try:
-                futures = {executor1.submit(_test_task, rule): rule for rule in self.rules}
+                futures = {search_executor.submit(self._search_single_rule, rule, keyword): rule for rule in valid_rules}
                 for future in concurrent.futures.as_completed(futures):
                     if cancel_event and cancel_event.is_set():
-                        executor1.shutdown(wait=False, cancel_futures=True)
-                        if status_callback:
-                            status_callback("搜索已由用户手动取消。")
+                        search_executor.shutdown(wait=False, cancel_futures=True)
                         return []
                     try:
                         res = future.result()
                         if res:
-                            valid_rules.append(res)
+                            for r in res:
+                                r['ratio'] = difflib.SequenceMatcher(None, keyword, r.get('bookName', '')).ratio()
+                                r['rule_index'] = r.get('rule', {}).get('rule_index', 999)
+                                if callback and not (cancel_event and cancel_event.is_set()):
+                                    callback(r)
+                            results.extend(res)
                     except Exception:
                         pass
             finally:
                 if not (cancel_event and cancel_event.is_set()):
-                    executor1.shutdown(wait=False)
+                    search_executor.shutdown(wait=False)
+
+        else:
+            # 流水线模式：测试线程与搜书线程并行！只要书源连通测试一通过，立刻发起该书源搜书！
+            test_executor = concurrent.futures.ThreadPoolExecutor(max_workers=20)
+            search_executor = concurrent.futures.ThreadPoolExecutor(max_workers=15)
+            search_futures = []
+            details_cache = {}
+            lock = threading.Lock()
+
+            def _search_pipeline(rule):
+                if cancel_event and cancel_event.is_set():
+                    return
+                is_ok, latency_ms = self.test_rule_connectivity(rule, cancel_event=cancel_event)
+                r_idx = rule.get('rule_index', 999)
+                r_name = rule.get('name', '未知')
+
+                with lock:
+                    details_cache[r_idx] = {"is_ok": is_ok, "latency_ms": latency_ms}
+
+                if rule_tested_callback and not (cancel_event and cancel_event.is_set()):
+                    rule_tested_callback(r_idx, r_name, is_ok, latency_ms)
+
+                if is_ok and not (cancel_event and cancel_event.is_set()):
+                    with lock:
+                        valid_rules.append(rule)
+                    # 连通测试一通过，立刻提交该书源的关键词搜书！
+                    f = search_executor.submit(self._search_single_rule, rule, keyword)
+                    with lock:
+                        search_futures.append(f)
+
+            if status_callback:
+                status_callback(f"开始对全量 {total_rules} 个书源发起表格嵌入式流水线测试与检索...")
+
+            try:
+                test_futures = [test_executor.submit(_search_pipeline, rule) for rule in self.rules]
+                for future in concurrent.futures.as_completed(test_futures):
+                    if cancel_event and cancel_event.is_set():
+                        test_executor.shutdown(wait=False, cancel_futures=True)
+                        search_executor.shutdown(wait=False, cancel_futures=True)
+                        return []
+
+                # 等待所有已发起的搜书任务完成并收集结果
+                for f in list(search_futures):
+                    if cancel_event and cancel_event.is_set():
+                        search_executor.shutdown(wait=False, cancel_futures=True)
+                        return []
+                    try:
+                        res = f.result()
+                        if res:
+                            for r in res:
+                                r['ratio'] = difflib.SequenceMatcher(None, keyword, r.get('bookName', '')).ratio()
+                                r['rule_index'] = r.get('rule', {}).get('rule_index', 999)
+                                if callback and not (cancel_event and cancel_event.is_set()):
+                                    callback(r)
+                            results.extend(res)
+                    except Exception:
+                        pass
+            finally:
+                if not (cancel_event and cancel_event.is_set()):
+                    test_executor.shutdown(wait=False)
+                    search_executor.shutdown(wait=False)
 
             valid_rules.sort(key=lambda r: r.get('rule_index', 999))
 
@@ -315,40 +356,6 @@ class SoNovelClient:
                 self.connectivity_cache["invalidated"] = False
                 self.connectivity_cache["valid_rule_indices"] = [r.get('rule_index', 999) for r in valid_rules]
                 self.connectivity_cache["details"] = details_cache
-
-        if cancel_event and cancel_event.is_set():
-            if status_callback:
-                status_callback("搜索已由用户手动取消。")
-            return []
-
-        if status_callback:
-            status_callback(f"书源连通性处理完成！准备检索...")
-
-        # 阶段 2：在可用书源上开展高并发检索 (不使用 with 语句)
-        results = []
-        executor2 = concurrent.futures.ThreadPoolExecutor(max_workers=15)
-        try:
-            futures = {executor2.submit(self._search_single_rule, rule, keyword): rule for rule in valid_rules}
-            for future in concurrent.futures.as_completed(futures):
-                if cancel_event and cancel_event.is_set():
-                    executor2.shutdown(wait=False, cancel_futures=True)
-                    if status_callback:
-                        status_callback("搜索已由用户手动取消。")
-                    return []
-                try:
-                    res = future.result()
-                    if res:
-                        for r in res:
-                            r['ratio'] = difflib.SequenceMatcher(None, keyword, r.get('bookName', '')).ratio()
-                            r['rule_index'] = r.get('rule', {}).get('rule_index', 999)
-                            if callback and not (cancel_event and cancel_event.is_set()):
-                                callback(r)
-                        results.extend(res)
-                except Exception:
-                    pass
-        finally:
-            if not (cancel_event and cancel_event.is_set()):
-                executor2.shutdown(wait=False)
 
         # 确定性多维稳定排序：相似度降序 > 规则位次升序 > 书名升序 > 书源升序
         results.sort(key=lambda x: (-round(x['ratio'], 3), x.get('rule_index', 999), x.get('bookName', ''), x.get('sourceName', '')))

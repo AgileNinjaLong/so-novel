@@ -238,26 +238,70 @@ class DownloadDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         
-        # 预先填充全量 25 个书源信息
-        self.rule_row_map = {}
-        from PyQt6.QtGui import QColor
+        self.rule_test_states = {}
         for idx, rule in enumerate(self.client.rules):
-            r_name = rule.get("name", "未知书源")
             r_idx = rule.get('rule_index', idx)
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(r_name))
+            r_name = rule.get("name", "未知书源")
+            self.rule_test_states[r_idx] = {
+                "name": r_name,
+                "rule_index": r_idx,
+                "is_ok": False,
+                "is_tested": False,
+                "latency_ms": 999999,
+                "latency_str": "-"
+            }
+        
+        self.refresh_connectivity_table()
+
+    def on_rule_tested(self, r_idx, r_name, is_ok, latency_ms):
+        if getattr(self, 'table_view_mode', '') != "connectivity":
+            return
             
-            status_item = QTableWidgetItem("⏳ 连接测试中...")
-            status_item.setForeground(QColor("#888888"))
+        if r_idx in self.rule_test_states:
+            st = self.rule_test_states[r_idx]
+            st["is_tested"] = True
+            st["is_ok"] = is_ok
+            st["latency_ms"] = latency_ms if is_ok else 999999
+            st["latency_str"] = f"{latency_ms} ms" if is_ok else "超时"
+
+        self.refresh_connectivity_table()
+
+    def refresh_connectivity_table(self):
+        """完全按照 [连通成功 (延迟升序) > 连通失败 > 测试中] 的三级优先级无缝刷新表格"""
+        if getattr(self, 'table_view_mode', '') != "connectivity":
+            return
+
+        sorted_states = list(self.rule_test_states.values())
+        
+        def sort_key(st):
+            if st["is_ok"]:
+                priority = 0
+            elif st["is_tested"]:
+                priority = 1
+            else:
+                priority = 2
+            return (priority, st["latency_ms"], st["rule_index"])
+
+        sorted_states.sort(key=sort_key)
+
+        from PyQt6.QtGui import QColor
+        self.table.setRowCount(len(sorted_states))
+        for row, st in enumerate(sorted_states):
+            self.table.setItem(row, 0, QTableWidgetItem(st["name"]))
+            
+            if st["is_ok"]:
+                status_item = QTableWidgetItem("✅ 连通成功")
+                status_item.setForeground(QColor("#2E7D32"))
+            elif st["is_tested"]:
+                status_item = QTableWidgetItem("❌ 超时/不可用")
+                status_item.setForeground(QColor("#C62828"))
+            else:
+                status_item = QTableWidgetItem("⏳ 连接测试中...")
+                status_item.setForeground(QColor("#888888"))
+                
             self.table.setItem(row, 1, status_item)
-            self.table.setItem(row, 2, QTableWidgetItem("-"))
-            
-            rule_item = QTableWidgetItem(f"规则 #{r_idx + 1}")
-            rule_item.setData(Qt.ItemDataRole.UserRole, r_idx)
-            self.table.setItem(row, 3, rule_item)
-            
-            self.rule_row_map[r_idx] = row
+            self.table.setItem(row, 2, QTableWidgetItem(st["latency_str"]))
+            self.table.setItem(row, 3, QTableWidgetItem(f"规则 #{st['rule_index'] + 1}"))
 
     def setup_results_view(self):
         """恢复表格为图书搜索结果视角"""
@@ -302,86 +346,11 @@ class DownloadDialog(QDialog):
         self.search_worker.error_signal.connect(self.on_search_error)
         self.search_worker.start()
 
-    def on_rule_tested(self, r_idx, r_name, is_ok, latency_ms):
-        if getattr(self, 'table_view_mode', '') != "connectivity":
-            return
-        row = self.rule_row_map.get(r_idx)
-        if row is not None and row < self.table.rowCount():
-            from PyQt6.QtGui import QColor
-            status_item = self.table.item(row, 1)
-            latency_item = self.table.item(row, 2)
-            if status_item and latency_item:
-                if is_ok:
-                    status_item.setText("✅ 连通成功")
-                    status_item.setForeground(QColor("#2E7D32")) # 绿色
-                    latency_item.setText(f"{latency_ms} ms")
-                else:
-                    status_item.setText("❌ 超时/不可用")
-                    status_item.setForeground(QColor("#C62828")) # 红色
-                    latency_item.setText("超时")
-        
-        # 每次单个书源测试完成，立刻触发实时重新排序并重构映射表
-        self.sort_connectivity_table()
-
-    def sort_connectivity_table(self):
-        """实时重新排序：连通成功(按延迟升序) > 连通失败 > 测试中(末尾)"""
-        if getattr(self, 'table_view_mode', '') != "connectivity":
-            return
-        
-        rows_data = []
-        for row in range(self.table.rowCount()):
-            name_item = self.table.item(row, 0)
-            status_item = self.table.item(row, 1)
-            latency_item = self.table.item(row, 2)
-            rule_idx_item = self.table.item(row, 3)
-            
-            if not name_item or not status_item or not rule_idx_item:
-                continue
-                
-            status_text = status_item.text()
-            is_ok = "✅" in status_text
-            is_failed = "❌" in status_text
-            
-            latency_val = 999999
-            if is_ok and latency_item:
-                m = re.search(r'\d+', latency_item.text())
-                if m:
-                    latency_val = int(m.group())
-                    
-            r_idx = rule_idx_item.data(Qt.ItemDataRole.UserRole)
-            # 优先级：0: 成功, 1: 失败, 2: 测试中 (按要求测试中排在最后)
-            priority = 0 if is_ok else (1 if is_failed else 2)
-            rows_data.append((
-                priority, 
-                latency_val, 
-                name_item.text(), 
-                status_text, 
-                status_item.foreground(), 
-                latency_item.text() if latency_item else "-", 
-                rule_idx_item.text() if rule_idx_item else "",
-                r_idx
-            ))
-
-        rows_data.sort(key=lambda x: (x[0], x[1], x[2]))
-
-        self.table.setRowCount(0)
-        self.rule_row_map.clear()
-        for priority, lat, name, status_text, fg_color, lat_text, rule_tag, r_idx in rows_data:
-            r = self.table.rowCount()
-            self.table.insertRow(r)
-            self.table.setItem(r, 0, QTableWidgetItem(name))
-            
-            st_item = QTableWidgetItem(status_text)
-            st_item.setForeground(fg_color)
-            self.table.setItem(r, 1, st_item)
-            
-            self.table.setItem(r, 2, QTableWidgetItem(lat_text))
-            
-            tag_item = QTableWidgetItem(rule_tag)
-            if r_idx is not None:
-                tag_item.setData(Qt.ItemDataRole.UserRole, r_idx)
-                self.rule_row_map[r_idx] = r
-            self.table.setItem(r, 3, tag_item)
+    def cancel_search(self):
+        if hasattr(self, 'search_worker') and self.search_worker:
+            self.search_worker.cancel()
+            self.progress_label.setText("正在强行打断连接，请稍候...")
+            self.search_btn.setEnabled(False)
 
     def cancel_search(self):
         if hasattr(self, 'search_worker') and self.search_worker:
