@@ -243,6 +243,7 @@ class DownloadDialog(QDialog):
         from PyQt6.QtGui import QColor
         for idx, rule in enumerate(self.client.rules):
             r_name = rule.get("name", "未知书源")
+            r_idx = rule.get('rule_index', idx)
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(r_name))
@@ -251,9 +252,12 @@ class DownloadDialog(QDialog):
             status_item.setForeground(QColor("#888888"))
             self.table.setItem(row, 1, status_item)
             self.table.setItem(row, 2, QTableWidgetItem("-"))
-            self.table.setItem(row, 3, QTableWidgetItem(f"规则 #{rule.get('rule_index', idx) + 1}"))
             
-            self.rule_row_map[rule.get('rule_index', idx)] = row
+            rule_item = QTableWidgetItem(f"规则 #{r_idx + 1}")
+            rule_item.setData(Qt.ItemDataRole.UserRole, r_idx)
+            self.table.setItem(row, 3, rule_item)
+            
+            self.rule_row_map[r_idx] = row
 
     def setup_results_view(self):
         """恢复表格为图书搜索结果视角"""
@@ -300,19 +304,21 @@ class DownloadDialog(QDialog):
             from PyQt6.QtGui import QColor
             status_item = self.table.item(row, 1)
             latency_item = self.table.item(row, 2)
-            if is_ok:
-                status_item.setText("✅ 连通成功")
-                status_item.setForeground(QColor("#2E7D32")) # 绿色
-                latency_item.setText(f"{latency_ms} ms")
-            else:
-                status_item.setText("❌ 超时/不可用")
-                status_item.setForeground(QColor("#C62828")) # 红色
-                latency_item.setText("超时")
+            if status_item and latency_item:
+                if is_ok:
+                    status_item.setText("✅ 连通成功")
+                    status_item.setForeground(QColor("#2E7D32")) # 绿色
+                    latency_item.setText(f"{latency_ms} ms")
+                else:
+                    status_item.setText("❌ 超时/不可用")
+                    status_item.setForeground(QColor("#C62828")) # 红色
+                    latency_item.setText("超时")
         
+        # 每次单个书源测试完成，立刻触发实时重新排序并重构映射表
         self.sort_connectivity_table()
 
     def sort_connectivity_table(self):
-        """将连通成功的书源向上置顶，并按延迟毫秒数升序排列"""
+        """将连通成功的书源实时向上置顶，并按延迟毫秒数升序排列，重建 rule_row_map 保证映射准确"""
         if getattr(self, 'table_view_mode', '') != "connectivity":
             return
         
@@ -323,7 +329,7 @@ class DownloadDialog(QDialog):
             latency_item = self.table.item(row, 2)
             rule_idx_item = self.table.item(row, 3)
             
-            if not name_item or not status_item:
+            if not name_item or not status_item or not rule_idx_item:
                 continue
                 
             status_text = status_item.text()
@@ -336,13 +342,24 @@ class DownloadDialog(QDialog):
                 if m:
                     latency_val = int(m.group())
                     
+            r_idx = rule_idx_item.data(Qt.ItemDataRole.UserRole)
             priority = 0 if is_ok else (1 if is_testing else 2)
-            rows_data.append((priority, latency_val, name_item.text(), status_text, status_item.foreground(), latency_item.text() if latency_item else "-", rule_idx_item.text() if rule_idx_item else ""))
+            rows_data.append((
+                priority, 
+                latency_val, 
+                name_item.text(), 
+                status_text, 
+                status_item.foreground(), 
+                latency_item.text() if latency_item else "-", 
+                rule_idx_item.text() if rule_idx_item else "",
+                r_idx
+            ))
 
         rows_data.sort(key=lambda x: (x[0], x[1], x[2]))
 
         self.table.setRowCount(0)
-        for priority, lat, name, status_text, fg_color, lat_text, rule_tag in rows_data:
+        self.rule_row_map.clear()
+        for priority, lat, name, status_text, fg_color, lat_text, rule_tag, r_idx in rows_data:
             r = self.table.rowCount()
             self.table.insertRow(r)
             self.table.setItem(r, 0, QTableWidgetItem(name))
@@ -352,7 +369,12 @@ class DownloadDialog(QDialog):
             self.table.setItem(r, 1, st_item)
             
             self.table.setItem(r, 2, QTableWidgetItem(lat_text))
-            self.table.setItem(r, 3, QTableWidgetItem(rule_tag))
+            
+            tag_item = QTableWidgetItem(rule_tag)
+            if r_idx is not None:
+                tag_item.setData(Qt.ItemDataRole.UserRole, r_idx)
+                self.rule_row_map[r_idx] = r
+            self.table.setItem(r, 3, tag_item)
 
     def cancel_search(self):
         if hasattr(self, 'search_worker') and self.search_worker:
