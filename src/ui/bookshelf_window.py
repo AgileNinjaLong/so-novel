@@ -1082,7 +1082,7 @@ class BookshelfWindow(QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event):
-        """关闭防呆保护：如果当前有正在隐蔽摸鱼阅读的小说，弹窗展示名册警示；若确认关闭，彻底干净退出，拒绝残留僵尸进程。"""
+        """点击主界面关闭按钮 (X) 时：在没有在看的小说时直接彻底退出程序；在有摸鱼阅读时弹窗提示并提供彻底退出选项，彻底消除后台僵尸进程！"""
         active_titles = []
         for path, win in list(self.active_reading_windows.items()):
             if win and win.isVisible() and getattr(win, 'book', None):
@@ -1091,28 +1091,28 @@ class BookshelfWindow(QMainWindow):
         if active_titles:
             book_list_str = "\n".join([f" • {t}" for t in active_titles])
             msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("🛡️ 防呆警示 - 摸鱼阅读中")
-            msg_box.setText(f"检测到当前有 {len(active_titles)} 本小说正在右下角摸鱼阅读中：\n{book_list_str}\n\n请选择关闭处理方式：")
+            msg_box.setWindowTitle("🛡️ 退出确认 - 摸鱼阅读中")
+            msg_box.setText(f"检测到当前有 {len(active_titles)} 本小说正在右下角摸鱼阅读中：\n{book_list_str}\n\n请选择关闭方式：")
             
-            b_keep = msg_box.addButton("保持主界面打开", QMessageBox.ButtonRole.RejectRole)
-            b_tray = msg_box.addButton("最小化至托盘(后台继续阅读)", QMessageBox.ButtonRole.AcceptRole)
-            b_close_all = msg_box.addButton("彻底退出程序(关闭全部窗口)", QMessageBox.ButtonRole.DestructiveRole)
+            b_close_all = msg_box.addButton("❌ 彻底退出程序(关闭全部)", QMessageBox.ButtonRole.DestructiveRole)
+            b_tray = msg_box.addButton("📌 仅缩小至托盘(后台继续阅读)", QMessageBox.ButtonRole.AcceptRole)
+            b_cancel = msg_box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
             
             msg_box.exec()
             clicked = msg_box.clickedButton()
             
-            if clicked == b_keep:
-                event.ignore()
+            if clicked == b_close_all:
+                event.accept()
+                self.quit_application()
             elif clicked == b_tray:
                 event.ignore()
                 self.hide()
-            elif clicked == b_close_all:
-                event.accept()
-                self.quit_application()
+            else:
+                event.ignore()
         else:
-            # 没有在看的小说时，关闭主界面默认隐藏至托盘
-            event.ignore()
-            self.hide()
+            # 当没有在看的小说时，点击主界面的 X 直接【彻底退出程序】，不留任何后台进程！
+            event.accept()
+            self.quit_application()
 
     def quit_application(self):
         """彻底干净退出软件，释放所有后台监听线程与资源，拒绝僵尸进程"""
