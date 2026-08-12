@@ -308,6 +308,51 @@ class DownloadDialog(QDialog):
                 status_item.setText("❌ 超时/不可用")
                 status_item.setForeground(QColor("#C62828")) # 红色
                 latency_item.setText("超时")
+        
+        self.sort_connectivity_table()
+
+    def sort_connectivity_table(self):
+        """将连通成功的书源向上置顶，并按延迟毫秒数升序排列"""
+        if getattr(self, 'table_view_mode', '') != "connectivity":
+            return
+        
+        rows_data = []
+        for row in range(self.table.rowCount()):
+            name_item = self.table.item(row, 0)
+            status_item = self.table.item(row, 1)
+            latency_item = self.table.item(row, 2)
+            rule_idx_item = self.table.item(row, 3)
+            
+            if not name_item or not status_item:
+                continue
+                
+            status_text = status_item.text()
+            is_ok = "✅" in status_text
+            is_testing = "⏳" in status_text
+            
+            latency_val = 999999
+            if is_ok and latency_item:
+                m = re.search(r'\d+', latency_item.text())
+                if m:
+                    latency_val = int(m.group())
+                    
+            priority = 0 if is_ok else (1 if is_testing else 2)
+            rows_data.append((priority, latency_val, name_item.text(), status_text, status_item.foreground(), latency_item.text() if latency_item else "-", rule_idx_item.text() if rule_idx_item else ""))
+
+        rows_data.sort(key=lambda x: (x[0], x[1], x[2]))
+
+        self.table.setRowCount(0)
+        for priority, lat, name, status_text, fg_color, lat_text, rule_tag in rows_data:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            self.table.setItem(r, 0, QTableWidgetItem(name))
+            
+            st_item = QTableWidgetItem(status_text)
+            st_item.setForeground(fg_color)
+            self.table.setItem(r, 1, st_item)
+            
+            self.table.setItem(r, 2, QTableWidgetItem(lat_text))
+            self.table.setItem(r, 3, QTableWidgetItem(rule_tag))
 
     def cancel_search(self):
         if hasattr(self, 'search_worker') and self.search_worker:

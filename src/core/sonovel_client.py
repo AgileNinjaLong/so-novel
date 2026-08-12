@@ -55,6 +55,20 @@ class SoNovelClient:
         }
         self.session.headers.update(self.headers)
 
+        # 30 分钟连通性缓存池
+        self.connectivity_cache = {
+            "timestamp": 0.0,
+            "invalidated": False,
+            "valid_rule_indices": [],
+            "details": {}
+        }
+
+    def invalidate_rule(self, rule_index: int):
+        """当搜书过程中发现原本通过测试的书源断连时，立即打回并标记缓存失效"""
+        self.connectivity_cache["invalidated"] = True
+        if rule_index in self.connectivity_cache["valid_rule_indices"]:
+            self.connectivity_cache["valid_rule_indices"].remove(rule_index)
+
     def _parse_dict_string(self, data_str: str, keyword: str = "") -> dict:
         if not data_str or data_str == "{}":
             return {}
@@ -184,11 +198,14 @@ class SoNovelClient:
                         "rule": rule
                     })
         except Exception:
-            pass
+            # 搜书网络异常：立即将该书源从 30 分钟连通缓存打回失效！
+            r_idx = rule.get("rule_index", 999)
+            self.invalidate_rule(r_idx)
+            
         return results
 
     def test_rule_connectivity(self, rule: dict) -> tuple[bool, int]:
-        """对单本书源规则的目标 host 发起快速连通性响应测试 (2.5s 超时)，返回 (is_ok, latency_ms)"""
+        """对单本书源规则的目标 host 发起快速连通性响应测试 (5.0s 封顶超时)，返回 (is_ok, latency_ms)"""
         if rule.get("disabled", False):
             return False, 0
         search_rule = rule.get("search", {})
@@ -201,13 +218,13 @@ class SoNovelClient:
         try:
             parsed = urllib.parse.urlparse(url)
             base_url = f"{parsed.scheme}://{parsed.netloc}"
-            resp = self.session.head(base_url, timeout=2.5, allow_redirects=True)
+            resp = self.session.head(base_url, timeout=5.0, allow_redirects=True)
             latency = int((time.time() - t0) * 1000)
             return resp.status_code < 500, latency
         except Exception:
             try:
                 t1 = time.time()
-                resp = self.session.get(url.replace('%s', 'test'), timeout=2.5)
+                resp = self.session.get(url.replace('%s', 'test'), timeout=5.0)
                 latency = int((time.time() - t1) * 1000)
                 return resp.status_code < 500, latency
             except Exception:
@@ -216,50 +233,75 @@ class SoNovelClient:
     def search(self, keyword: str, callback=None, status_callback=None, cancel_event=None, rule_tested_callback=None) -> List[Dict[str, Any]]:
         import concurrent.futures
         import difflib
+        import time
         
-        # 阶段 1：高并发并行预检所有书源连通性 (20 线程并发，1-2秒内完成)
+        now = time.time()
+        cache_age = now - self.connectivity_cache.get("timestamp", 0.0)
+        is_cache_valid = (cache_age < 1800) and (not self.connectivity_cache.get("invalidated", False)) and bool(self.connectivity_cache.get("valid_rule_indices"))
+
         valid_rules = []
         total_rules = len(self.rules)
-        completed_count = 0
-        lock = threading.Lock()
-        
-        def _test_task(rule):
-            nonlocal completed_count
-            if cancel_event and cancel_event.is_set():
-                return None
-            is_ok, latency_ms = self.test_rule_connectivity(rule)
-            r_idx = rule.get('rule_index', 999)
-            r_name = rule.get('name', '未知')
-            
+
+        if is_cache_valid:
+            valid_indices = set(self.connectivity_cache.get("valid_rule_indices", []))
+            valid_rules = [r for r in self.rules if r.get('rule_index', 999) in valid_indices]
+            if status_callback:
+                status_callback(f"复用 30 分钟内连通性缓存 (已验证 {len(valid_rules)} 个可用书源，0 秒闪速搜索)...")
             if rule_tested_callback:
-                rule_tested_callback(r_idx, r_name, is_ok, latency_ms)
-
-            with lock:
-                completed_count += 1
-                if status_callback:
-                    status_callback(f"正在表格中并发测试书源连通性 [{completed_count}/{total_rules}] ...")
-            return rule if is_ok else None
-
-        if status_callback:
-            status_callback(f"开始对全量 {total_rules} 个书源发起表格嵌入式高并发预检...")
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-            futures = {executor.submit(_test_task, rule): rule for rule in self.rules}
-            for future in concurrent.futures.as_completed(futures):
+                for r in self.rules:
+                    r_idx = r.get('rule_index', 999)
+                    is_ok = r_idx in valid_indices
+                    lat = self.connectivity_cache.get("details", {}).get(r_idx, {}).get("latency_ms", 100)
+                    rule_tested_callback(r_idx, r.get('name', ''), is_ok, lat if is_ok else 0)
+        else:
+            # 阶段 1：高并发并行预检所有书源连通性 (20 线程并发，5s 封顶超时)
+            completed_count = 0
+            lock = threading.Lock()
+            details_cache = {}
+            
+            def _test_task(rule):
+                nonlocal completed_count
                 if cancel_event and cancel_event.is_set():
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    if status_callback:
-                        status_callback("用户已中途取消预检。")
-                    return []
-                try:
-                    res = future.result()
-                    if res:
-                        valid_rules.append(res)
-                except Exception:
-                    pass
+                    return None
+                is_ok, latency_ms = self.test_rule_connectivity(rule)
+                r_idx = rule.get('rule_index', 999)
+                r_name = rule.get('name', '未知')
+                
+                details_cache[r_idx] = {"is_ok": is_ok, "latency_ms": latency_ms}
+                if rule_tested_callback:
+                    rule_tested_callback(r_idx, r_name, is_ok, latency_ms)
 
-        # 重新按照原规则序号位次排序，保持书源权重的确定性
-        valid_rules.sort(key=lambda r: r.get('rule_index', 999))
+                with lock:
+                    completed_count += 1
+                    if status_callback:
+                        status_callback(f"正在表格中并发测试书源连通性 [{completed_count}/{total_rules}] ...")
+                return rule if is_ok else None
+
+            if status_callback:
+                status_callback(f"开始对全量 {total_rules} 个书源发起表格嵌入式高并发预检 (5s 封顶超时)...")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                futures = {executor.submit(_test_task, rule): rule for rule in self.rules}
+                for future in concurrent.futures.as_completed(futures):
+                    if cancel_event and cancel_event.is_set():
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        if status_callback:
+                            status_callback("用户已中途取消预检。")
+                        return []
+                    try:
+                        res = future.result()
+                        if res:
+                            valid_rules.append(res)
+                    except Exception:
+                        pass
+
+            valid_rules.sort(key=lambda r: r.get('rule_index', 999))
+
+            # 更新 30 分钟缓存
+            self.connectivity_cache["timestamp"] = time.time()
+            self.connectivity_cache["invalidated"] = False
+            self.connectivity_cache["valid_rule_indices"] = [r.get('rule_index', 999) for r in valid_rules]
+            self.connectivity_cache["details"] = details_cache
 
         if cancel_event and cancel_event.is_set():
             if status_callback:
@@ -267,7 +309,7 @@ class SoNovelClient:
             return []
 
         if status_callback:
-            status_callback(f"书源连通性预检完成！成功连通 {len(valid_rules)}/{total_rules} 个可用书源，准备检索...")
+            status_callback(f"书源连通性处理完成！准备检索...")
 
         # 阶段 2：在可用书源上开展高并发检索
         results = []
