@@ -978,14 +978,18 @@ class BookshelfWindow(QMainWindow):
         btn_box = QWidget()
         btn_layout = QHBoxLayout(btn_box)
         btn_layout.setContentsMargins(2, 2, 2, 2)
-        btn_layout.setSpacing(4)
+        btn_layout.setSpacing(6)
 
         cancel_btn = QPushButton("❌ 取消")
-        cancel_btn.setStyleSheet("background-color: #C62828; color: white; border-radius: 3px; font-size: 11px;")
+        cancel_btn.setFixedWidth(70)
+        cancel_btn.setFixedHeight(26)
+        cancel_btn.setStyleSheet("background-color: #C62828; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
         cancel_btn.clicked.connect(lambda _, tid=task_id: self.cancel_download_task(tid))
 
         del_btn = QPushButton("🗑️ 清除")
-        del_btn.setStyleSheet("background-color: #555555; color: white; border-radius: 3px; font-size: 11px;")
+        del_btn.setFixedWidth(70)
+        del_btn.setFixedHeight(26)
+        del_btn.setStyleSheet("background-color: #555555; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
         del_btn.clicked.connect(lambda _, tid=task_id: self.remove_download_task(tid))
 
         btn_layout.addWidget(cancel_btn)
@@ -1058,7 +1062,9 @@ class BookshelfWindow(QMainWindow):
             info["st_item"].setForeground(QColor("#2E7D32"))
             info["btn"].setText("✅ 完成")
             info["btn"].setEnabled(False)
-            info["btn"].setStyleSheet("background-color: #2E7D32; color: white;")
+            info["btn"].setFixedWidth(70)
+            info["btn"].setFixedHeight(26)
+            info["btn"].setStyleSheet("background-color: #2E7D32; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
             
             # 自动登记到 ConfigManager 藏书库
             self.config_manager.add_to_bookshelf(save_path, {
@@ -1073,6 +1079,9 @@ class BookshelfWindow(QMainWindow):
             info["st_item"].setForeground(QColor("#C62828"))
             info["btn"].setText("重试")
             info["btn"].setEnabled(True)
+            info["btn"].setFixedWidth(70)
+            info["btn"].setFixedHeight(26)
+            info["btn"].setStyleSheet("background-color: #0288D1; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
 
     def on_task_cancelled(self, task_id: str):
         if task_id in self.download_tasks:
@@ -1081,7 +1090,9 @@ class BookshelfWindow(QMainWindow):
             info["st_item"].setForeground(QColor("#888888"))
             info["btn"].setText("已取消")
             info["btn"].setEnabled(False)
-            info["btn"].setStyleSheet("background-color: #888888; color: white;")
+            info["btn"].setFixedWidth(70)
+            info["btn"].setFixedHeight(26)
+            info["btn"].setStyleSheet("background-color: #888888; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
 
     # ====== 系统设置页 =====
     def save_settings_tab(self):
