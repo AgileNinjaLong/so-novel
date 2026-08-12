@@ -15,9 +15,10 @@ class BaseStealthWindow(QWidget):
     file_loaded_signal = pyqtSignal(str)
     settings_changed_signal = pyqtSignal()
 
-    def __init__(self, config_manager, parent=None):
+    def __init__(self, config_manager, parent=None, bookshelf_window=None):
         super().__init__(parent)
         self.config_mgr = config_manager
+        self.bookshelf_window = bookshelf_window
         self.drag_position = QPoint()
         self.is_boss_hidden = False
         self.is_dialog_open = False
@@ -434,6 +435,8 @@ class BaseStealthWindow(QWidget):
         from src.ui.download_dialog import DownloadDialog
 
         menu = QMenu(self)
+        bookshelf_action = menu.addAction("📚 返回主书架")
+        menu.addSeparator()
         open_action = menu.addAction("📂 打开本地电子书 (TXT/EPUB/PDF)")
         download_action = menu.addAction("🌐 搜索/下载网络小说 (SoNovel)")
         
@@ -455,7 +458,17 @@ class BaseStealthWindow(QWidget):
         quit_action = menu.addAction("❌ 退出软件")
 
         action = menu.exec(event.globalPos())
-        if action == open_action:
+        if action == bookshelf_action:
+            self.stop_auto_scroll()
+            self.hide()
+            if self.bookshelf_window:
+                self.bookshelf_window.refresh_bookshelf()
+                self.bookshelf_window.show()
+            else:
+                from src.ui.bookshelf_window import BookshelfWindow
+                self.bookshelf_window = BookshelfWindow(self.config_mgr)
+                self.bookshelf_window.show()
+        elif action == open_action:
             self.is_dialog_open = True
             file_path, _ = QFileDialog.getOpenFileName(
                 self, "选择电子书", "", "Books (*.txt *.epub *.pdf);;All Files (*)"

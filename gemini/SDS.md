@@ -90,14 +90,50 @@ class Book:
     current_position: int  # 当前读取位置/光标
 ```
 
-#### 各格式解析策略：
-1.  **TXT 解析器 (`TxtParser`)**：
-    *   读取文件前 10KB 字节流，使用 `chardet` 判别编码（UTF-8, GBK 等）。
-    *   使用正则表达式 `r'^(第[零一二三四五六七八九十百千万0-9]+[章回节集].*|Chapter\s+\d+.*)'` 进行分章提取。若无匹配项，则按固定字数（如 2000 字）切分为虚拟章节。
-2.  **EPUB 解析器 (`EpubParser`)**：
-    *   利用 `ebooklib` 解包 `.epub` 容器，提取 `ITEM_DOCUMENT`。
-    *   通过 `BeautifulSoup` 过滤 `<style>`、`<script>` 及图片标签，输出纯净文本与 TOC 目录映射。
-3.  **PDF 解析器 (`PdfParser`)**：
+### 3.6 多小说并发下载与网络连接隔离架构设计 (Multi-Task Download Manager Architecture)
+
+#### 1. 网络 Session 物理隔离与连接池扩展 (Session & Connection Pool Isolation)
+为彻底解决多任务并行下载以及边搜书边下载时 `requests.Session` 槽位争抢死锁的问题，架构组设计了独立连接池分配机制：
+
+* **搜书独立 Session**：`SoNovelClient.search_session` (专用于 24 书源连通预检与搜索)。
+* **任务专属 Session**：每一个创建的 `DownloadWorker` 拥有独享的 `requests.Session()`，并挂载具有 `pool_maxsize=50` 的 `HTTPAdapter`。
+  ```python
+  adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50)
+  self.session.mount('http://', adapter)
+  self.session.mount('https://', adapter)
+  ```
+* **零相互干涉保障**：下载线程与搜书线程拥有独立的 Socket 槽位，无论后台同时下载多少本小说，前台搜书均能获得 100% 全速响应，后台下载速度零衰减。
+
+#### 2. 下载任务控制句柄与独立 0ms 取消打断 (`DownloadTask` Controller)
+为实现独立取消功能，引入 `DownloadTask` 句柄数据模型：
+
+```python
+class DownloadTask(QObject):
+    progress_signal = pyqtSignal(int, int, str) # current, total, text
+    status_signal = pyqtSignal(str)              # 'downloading', 'cancelled', 'completed', 'failed'
+    
+    def __init__(self, task_id: str, book_info: dict, save_path: str, export_mode: str):
+        super().__init__()
+        self.task_id = task_id
+        self.book_info = book_info
+        self.save_path = save_path
+        self.export_mode = export_mode
+        self.cancel_event = threading.Event()
+        
+    def cancel(self):
+        self.cancel_event.set()
+```
+
+在中途下载过程中：
+* 每次完成一章，线程即校验 `self.cancel_event.is_set()`。
+* 若触发取消：线程池立即 shutdown(`wait=False, cancel_futures=True`)，自动清理落盘未完成的半成品文件，广播 `'cancelled'` 信号，按钮从 `❌ 取消下载` 恢复为 `📥 重新下载`。
+
+#### 3. 摸鱼书架与下载管理中心 UI 架构 (`DownloadManager` & Bookshelf Drawer)
+* `DownloadDialog` 内置标签卡切页或列表展示：
+  - **切页 1：🔍 全网搜书** (提供表格流式搜索与勾选下载)
+  - **切页 2：📥 下载任务与书架** (展现活动中与已完成的任务卡片)
+* 支持同时运行多个 `DownloadWorker` 实例，每个任务独立挂载进度条、格式提示与 `取消` 按钮。
+* 已下载完成的小说文件自动同步注册至本地持久化数据库，可一键在极简悬浮窗、IDE伪装、CAD伪装窗口中无缝加载阅读。
     *   利用 `pypdf.PdfReader` 按页读取文本，拼接为小说流。
 
 ### 3.2 窗口控制与伪装层 (Stealth Window Engine)

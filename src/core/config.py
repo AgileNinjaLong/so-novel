@@ -25,7 +25,8 @@ DEFAULT_SETTINGS = {
     "font_color": "#333333",
     "bg_color": "#FFFFFF",
     "line_length": 35,
-    "last_file": ""      # 上次打开的图书路径
+    "last_file": "",      # 上次打开的图书路径
+    "bookshelf": {}       # 书架列表 path -> {title, author, format, add_time, chapter_index, character_offset}
 }
 
 class ConfigManager(QObject):
@@ -42,6 +43,50 @@ class ConfigManager(QObject):
         self._save_timer.timeout.connect(self.save)
         
         self.load()
+
+    def get_bookshelf(self) -> Dict[str, Dict[str, Any]]:
+        if "bookshelf" not in self.settings or not isinstance(self.settings["bookshelf"], dict):
+            self.settings["bookshelf"] = {}
+        return self.settings["bookshelf"]
+
+    def add_to_bookshelf(self, file_path: str, info: Optional[Dict[str, Any]] = None):
+        import time
+        file_path = os.path.abspath(file_path)
+        shelf = self.get_bookshelf()
+        
+        filename = os.path.basename(file_path)
+        name_without_ext, ext = os.path.splitext(filename)
+        fmt = ext.lstrip('.').lower() or 'txt'
+        
+        title = name_without_ext
+        author = "未知作者"
+        if "_" in name_without_ext:
+            parts = name_without_ext.split("_", 1)
+            title, author = parts[0], parts[1]
+        elif "(" in name_without_ext and ")" in name_without_ext:
+            title = name_without_ext.split("(")[0]
+            author = name_without_ext.split("(")[1].rstrip(")")
+
+        data = {
+            "title": info.get("title", title) if info else title,
+            "author": info.get("author", author) if info else author,
+            "format": fmt,
+            "add_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "chapter_index": 0,
+            "character_offset": 0
+        }
+        if info:
+            data.update(info)
+
+        shelf[file_path] = data
+        self._save_timer.start()
+
+    def remove_from_bookshelf(self, file_path: str):
+        file_path = os.path.abspath(file_path)
+        shelf = self.get_bookshelf()
+        if file_path in shelf:
+            del shelf[file_path]
+            self._save_timer.start()
 
     def load(self):
         if os.path.exists(self.config_path):

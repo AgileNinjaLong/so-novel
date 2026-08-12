@@ -1,9 +1,13 @@
 import os
 import sys
+import re
+import time
+import threading
+import requests
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QLabel, QFileDialog
+    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar, QLabel, QFileDialog, QTabWidget, QWidget
 )
 from src.core.sonovel_client import SoNovelClient
 
@@ -18,11 +22,9 @@ class SearchWorker(QObject):
         super().__init__()
         self.client = client
         self.keyword = keyword
-        import threading
         self.cancel_event = threading.Event()
 
     def start(self):
-        import threading
         threading.Thread(target=self.run, daemon=True).start()
 
     def cancel(self):
@@ -66,20 +68,32 @@ class SearchWorker(QObject):
                 pass
 
 class DownloadWorker(QObject):
-    progress_signal = pyqtSignal(int, int, str)
-    finished_signal = pyqtSignal(str)
-    error_signal = pyqtSignal(str)
+    progress_signal = pyqtSignal(str, int, int, str)
+    finished_signal = pyqtSignal(str, str)
+    error_signal = pyqtSignal(str, str)
+    cancelled_signal = pyqtSignal(str)
 
-    def __init__(self, client: SoNovelClient, book_info: dict, save_path: str, export_mode: str = "txt"):
+    def __init__(self, client: SoNovelClient, task_id: str, book_info: dict, save_path: str, export_mode: str = "txt"):
         super().__init__()
         self.client = client
+        self.task_id = task_id
         self.book_info = book_info
         self.save_path = save_path
         self.export_mode = export_mode  # 'txt', 'epub', 'dir'
+        self.cancel_event = threading.Event()
+        
+        # 独立专属 requests.Session 与 50 槽位连接池，防止搜书时槽位卡死
+        self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50)
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
+        self.session.headers.update(self.client.headers)
 
     def start(self):
-        import threading
         threading.Thread(target=self.run, daemon=True).start()
+
+    def cancel(self):
+        self.cancel_event.set()
 
     def run(self):
         try:
@@ -89,14 +103,18 @@ class DownloadWorker(QObject):
             author = self.book_info.get("author", "未知作者")
             
             # 1. 获取目录
-            self.progress_signal.emit(0, 0, "正在获取目录...")
+            self.progress_signal.emit(self.task_id, 0, 0, "正在解析图书目录...")
             toc = self.client.get_toc(book_url, rule)
             if not toc:
-                self.error_signal.emit("未解析到任何目录章节。")
+                self.error_signal.emit(self.task_id, "未解析到任何目录章节。")
+                return
+
+            if self.cancel_event.is_set():
+                self.cancelled_signal.emit(self.task_id)
                 return
 
             total = len(toc)
-            self.progress_signal.emit(0, total, f"找到 {total} 章，准备极速下载...")
+            self.progress_signal.emit(self.task_id, 0, total, f"找到 {total} 章，准备高并发下载...")
 
             os.makedirs(os.path.dirname(os.path.abspath(self.save_path)), exist_ok=True)
 
@@ -105,38 +123,59 @@ class DownloadWorker(QObject):
             completed = 0
 
             def _download_task(i, chap):
+                if self.cancel_event.is_set():
+                    return i, None
                 try:
-                    return i, self.client.download_chapter(chap["url"], rule)
+                    # 使用独立 session 进行抓取
+                    content = self.download_chapter_isolated(chap["url"], rule)
+                    return i, content
                 except Exception as e:
                     return i, f"下载失败: {e}"
 
-            # 使用高并发加快下载速度
-            with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=30)
+            try:
                 futures = {executor.submit(_download_task, i, chap): i for i, chap in enumerate(toc)}
                 for future in concurrent.futures.as_completed(futures):
-                    i, content = future.result()
-                    chapter_contents[i] = content
-                    completed += 1
-                    
-                    if completed % 10 == 0 or completed == total:
-                        self.progress_signal.emit(completed, total, f"极速下载中: {completed}/{total} 章")
+                    if self.cancel_event.is_set():
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        self.cancelled_signal.emit(self.task_id)
+                        return
+                    try:
+                        i, content = future.result()
+                        chapter_contents[i] = content
+                        completed += 1
+                        
+                        if completed % 5 == 0 or completed == total:
+                            self.progress_signal.emit(self.task_id, completed, total, f"极速下载中: {completed}/{total} 章")
+                    except Exception:
+                        pass
+            finally:
+                if not self.cancel_event.is_set():
+                    executor.shutdown(wait=False)
 
-            # 针对少量因网络抖动或代理限制下载失败的章节，进行二次串行精准补下载
+            if self.cancel_event.is_set():
+                self.cancelled_signal.emit(self.task_id)
+                return
+
+            # 补漏下载
             failed_indices = [i for i, c in enumerate(chapter_contents) if not c or "下载失败" in c or "解析失败" in c]
-            if failed_indices:
-                self.progress_signal.emit(total, total, f"检测到 {len(failed_indices)} 章超时，正在自动重试补全...")
+            if failed_indices and not self.cancel_event.is_set():
+                self.progress_signal.emit(self.task_id, total, total, f"正在精准补全 {len(failed_indices)} 个卡顿章节...")
                 for idx in failed_indices:
+                    if self.cancel_event.is_set():
+                        self.cancelled_signal.emit(self.task_id)
+                        return
                     chap = toc[idx]
                     try:
-                        res = self.client.download_chapter(chap["url"], rule)
+                        res = self.download_chapter_isolated(chap["url"], rule)
                         if "下载失败" not in res and "解析失败" not in res:
                             chapter_contents[idx] = res
                     except Exception:
                         pass
 
-            self.progress_signal.emit(total, total, "下载完毕，正在按所选模式合成落盘...")
+            self.progress_signal.emit(self.task_id, total, total, "下载完毕，正在按格式合成落盘...")
 
-            # 2. 根据所选 export_mode 进行多样化合成落盘
+            # 2. 合成落盘
             if self.export_mode == "epub":
                 from src.core.epub_builder import EpubBuilder
                 chapters_data = [
@@ -157,30 +196,108 @@ class DownloadWorker(QObject):
                     for idx, chap in enumerate(toc):
                         f.write(f"\n\n{chap['title']}\n\n{chapter_contents[idx] or ''}\n")
 
-            self.finished_signal.emit(self.save_path)
+            self.finished_signal.emit(self.task_id, self.save_path)
         except Exception as e:
-            self.error_signal.emit(f"下载合并发生异常: {str(e)}")
+            self.error_signal.emit(self.task_id, f"下载合并发生异常: {str(e)}")
+
+    def download_chapter_isolated(self, chapter_url: str, rule: dict) -> str:
+        """使用独享物理 Session 抓取章节纯文本"""
+        chap_rule = rule.get("chapter", {})
+        content_parts = []
+        current_url = chapter_url
+        visited = set()
+
+        while current_url and current_url not in visited:
+            if self.cancel_event.is_set():
+                break
+            visited.add(current_url)
+            resp = None
+            for attempt in range(3):
+                if self.cancel_event.is_set():
+                    break
+                try:
+                    resp = self.session.get(current_url, timeout=12)
+                    if resp.status_code == 200:
+                        break
+                except Exception:
+                    if attempt < 2:
+                        time.sleep(0.3)
+
+            if not resp or resp.status_code != 200:
+                return "(本章下载失败)"
+
+            try:
+                if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
+                    resp.encoding = resp.apparent_encoding
+                
+                tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
+                
+                filter_tags = [t.strip() for t in chap_rule.get("filterTag", "").split(',') if t.strip()]
+                for tag in filter_tags:
+                    for match in self.client._select_elements(tree, tag):
+                        match.drop_tree()
+                
+                content_rule = chap_rule.get("content", "")
+                js_code = ""
+                if '@js:' in content_rule:
+                    content_rule, js_code = content_rule.split('@js:', 1)
+
+                content_nodes = self.client._select_elements(tree, content_rule)
+                if not content_nodes:
+                    break
+                    
+                node = content_nodes[0]
+                
+                if js_code:
+                    raw_inner_html = html.tostring(node, encoding='unicode', method='html')
+                    processed_html = self.client._apply_js(raw_inner_html, js_code)
+                    node = html.fromstring(processed_html)
+                
+                for br in node.xpath(".//br"):
+                    br.tail = "\n" + (br.tail or "")
+                for p in node.xpath(".//p"):
+                    p.tail = "\n" + (p.tail or "")
+                    
+                text = node.text_content()
+                filter_txt = chap_rule.get("filterTxt", "")
+                if filter_txt:
+                    text = re.sub(filter_txt, '', text)
+                    
+                content_parts.append("\n".join([line.strip() for line in text.splitlines() if line.strip()]))
+                break
+            except Exception:
+                return "(本章解析失败)"
+                
+        return "\n".join(content_parts) if content_parts else "(本章暂无内容)"
 
 
 class DownloadDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.client = SoNovelClient()
-        self.setWindowTitle("🔍 搜索与下载小说 (SoNovel)")
-        self.resize(800, 500)
-        
-        # 使用原生窗口装饰，这里不采用极简无边框
+        self.setWindowTitle("🌐 全网书城与多任务下载中心")
+        self.resize(850, 530)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
+        self.tasks = {}  # task_id -> {worker, row, save_path, title, author, mode}
+        self.results = []
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
 
-        # 搜索区
+        # 选项卡控件
+        self.tabs = QTabWidget()
+        main_layout.addWidget(self.tabs)
+
+        # ====== 切页 1: 🔍 全网搜书 =====
+        search_tab = QWidget()
+        search_layout = QVBoxLayout(search_tab)
+        
+        # 搜索框区
         h_layout = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("输入小说名或作者进行全网规则搜索...")
+        self.search_input.setPlaceholderText("输入小说名或作者进行 24 书源高并发搜索...")
         self.search_input.returnPressed.connect(self.do_search)
         
         self.search_btn = QPushButton("搜索")
@@ -188,9 +305,9 @@ class DownloadDialog(QDialog):
         
         h_layout.addWidget(self.search_input)
         h_layout.addWidget(self.search_btn)
-        layout.addLayout(h_layout)
+        search_layout.addLayout(h_layout)
 
-        # 结果表格
+        # 结果/连通性表格
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["书名", "作者", "最新章节", "书源"])
@@ -200,16 +317,12 @@ class DownloadDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        layout.addWidget(self.table)
+        search_layout.addWidget(self.table)
 
-        # 进度区
+        # 搜索状态与下载控制区
         self.progress_label = QLabel("")
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_label)
-        layout.addWidget(self.progress_bar)
+        search_layout.addWidget(self.progress_label)
 
-        # 底部操作控制区
         bottom_layout = QHBoxLayout()
         from PyQt6.QtWidgets import QComboBox
         self.mode_combo = QComboBox()
@@ -217,18 +330,35 @@ class DownloadDialog(QDialog):
         self.mode_combo.addItem("📚 EPUB 电子书 (标准打包)", "epub")
         self.mode_combo.addItem("📂 按章节拆分目录 (离散文件)", "dir")
         
-        self.download_btn = QPushButton("📥 下载选中的小说")
+        self.download_btn = QPushButton("📥 下载选中的小说 (添加任务)")
+        self.download_btn.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px;")
         self.download_btn.clicked.connect(self.do_download)
         
-        bottom_layout.addWidget(QLabel("合成模式:"))
+        bottom_layout.addWidget(QLabel("合成格式:"))
         bottom_layout.addWidget(self.mode_combo)
         bottom_layout.addWidget(self.download_btn)
-        layout.addLayout(bottom_layout)
+        search_layout.addLayout(bottom_layout)
 
-        self.results = []
+        self.tabs.addTab(search_tab, "🔍 全网搜书")
+
+        # ====== 切页 2: 📥 下载任务与进度 =====
+        task_tab = QWidget()
+        task_layout = QVBoxLayout(task_tab)
+
+        self.task_table = QTableWidget()
+        self.task_table.setColumnCount(5)
+        self.task_table.setHorizontalHeaderLabels(["小说名称", "格式", "进度条", "状态说明", "操作"])
+        self.task_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.task_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.task_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.task_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.task_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.task_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        task_layout.addWidget(self.task_table)
+
+        self.tabs.addTab(task_tab, "📥 下载任务与书架 (0)")
 
     def setup_connectivity_view(self):
-        """初始化表格为显眼的书源连通性测试模式视角"""
         self.table_view_mode = "connectivity"
         self.table.setRowCount(0)
         self.table.setColumnCount(4)
@@ -250,45 +380,35 @@ class DownloadDialog(QDialog):
                 "latency_ms": 999999,
                 "latency_str": "-"
             }
-        
         self.refresh_connectivity_table()
 
     def on_rule_tested(self, r_idx, r_name, is_ok, latency_ms):
         if getattr(self, 'table_view_mode', '') != "connectivity":
             return
-            
         if r_idx in self.rule_test_states:
             st = self.rule_test_states[r_idx]
             st["is_tested"] = True
             st["is_ok"] = is_ok
             st["latency_ms"] = latency_ms if is_ok else 999999
             st["latency_str"] = f"{latency_ms} ms" if is_ok else "超时"
-
         self.refresh_connectivity_table()
 
     def refresh_connectivity_table(self):
-        """完全按照 [连通成功 (延迟升序) > 连通失败 > 测试中] 的三级优先级无缝刷新表格"""
         if getattr(self, 'table_view_mode', '') != "connectivity":
             return
 
         sorted_states = list(self.rule_test_states.values())
-        
         def sort_key(st):
-            if st["is_ok"]:
-                priority = 0
-            elif st["is_tested"]:
-                priority = 1
-            else:
-                priority = 2
+            if st["is_ok"]: priority = 0
+            elif st["is_tested"]: priority = 1
+            else: priority = 2
             return (priority, st["latency_ms"], st["rule_index"])
 
         sorted_states.sort(key=sort_key)
-
         from PyQt6.QtGui import QColor
         self.table.setRowCount(len(sorted_states))
         for row, st in enumerate(sorted_states):
             self.table.setItem(row, 0, QTableWidgetItem(st["name"]))
-            
             if st["is_ok"]:
                 status_item = QTableWidgetItem("✅ 连通成功")
                 status_item.setForeground(QColor("#2E7D32"))
@@ -304,7 +424,6 @@ class DownloadDialog(QDialog):
             self.table.setItem(row, 3, QTableWidgetItem(f"规则 #{st['rule_index'] + 1}"))
 
     def setup_results_view(self):
-        """恢复表格为图书搜索结果视角"""
         self.table_view_mode = "results"
         self.table.setRowCount(0)
         self.table.setColumnCount(4)
@@ -315,7 +434,6 @@ class DownloadDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
 
     def do_search(self):
-        import time
         now = time.time()
         if hasattr(self, 'last_search_trigger_time') and now - self.last_search_trigger_time < 0.3:
             return
@@ -334,7 +452,6 @@ class DownloadDialog(QDialog):
         self.search_btn.setEnabled(True)
         self.results.clear()
         
-        # 初始化显眼的书源表格预检视图
         self.setup_connectivity_view()
         self.progress_label.setText("正在全量并发测试书源连通性...")
         
@@ -345,12 +462,6 @@ class DownloadDialog(QDialog):
         self.search_worker.finished_signal.connect(self.on_search_finished)
         self.search_worker.error_signal.connect(self.on_search_error)
         self.search_worker.start()
-
-    def cancel_search(self):
-        if hasattr(self, 'search_worker') and self.search_worker:
-            self.search_worker.cancel()
-            self.progress_label.setText("正在强行打断连接，请稍候...")
-            self.search_btn.setEnabled(False)
 
     def cancel_search(self):
         if hasattr(self, 'search_worker') and self.search_worker:
@@ -416,48 +527,128 @@ class DownloadDialog(QDialog):
         default_download_dir = os.path.join(app_dir, "download")
         os.makedirs(default_download_dir, exist_ok=True)
 
+        book_title = book_info.get('bookName', '未知')
+        author_name = book_info.get('author', '未知')
+
         if export_mode == "epub":
             filter_str = "EPUB Files (*.epub);;All Files (*)"
-            default_filename = f"{book_info.get('bookName', '未知')}_{book_info.get('author', '未知')}.epub"
+            default_filename = f"{book_title}_{author_name}.epub"
             default_save_path = os.path.join(default_download_dir, default_filename)
             save_path, _ = QFileDialog.getSaveFileName(self, "选择 EPUB 保存路径", default_save_path, filter_str)
         elif export_mode == "dir":
-            default_filename = f"{book_info.get('bookName', '未知')}_{book_info.get('author', '未知')}"
+            default_filename = f"{book_title}_{author_name}"
             default_save_path = os.path.join(default_download_dir, default_filename)
             save_path = QFileDialog.getExistingDirectory(self, "选择保存文件夹目录", default_save_path)
         else:
             filter_str = "Text Files (*.txt);;All Files (*)"
-            default_filename = f"{book_info.get('bookName', '未知')}_{book_info.get('author', '未知')}.txt"
+            default_filename = f"{book_title}_{author_name}.txt"
             default_save_path = os.path.join(default_download_dir, default_filename)
             save_path, _ = QFileDialog.getSaveFileName(self, "选择 TXT 保存路径", default_save_path, filter_str)
 
         if not save_path:
             return  # 用户取消
 
-        self.download_btn.setEnabled(False)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
+        # 创建多任务独立的 DownloadWorker
+        task_id = f"task_{int(time.time() * 1000)}"
+        worker = DownloadWorker(self.client, task_id, book_info, save_path, export_mode=export_mode)
         
-        self.download_worker = DownloadWorker(self.client, book_info, save_path, export_mode=export_mode)
-        self.download_worker.progress_signal.connect(self.on_download_progress)
-        self.download_worker.finished_signal.connect(self.on_download_finished)
-        self.download_worker.error_signal.connect(self.on_download_error)
-        self.download_worker.start()
+        # 将任务添加到下载管理 Tab 表格中
+        t_row = self.task_table.rowCount()
+        self.task_table.insertRow(t_row)
+        
+        self.task_table.setItem(t_row, 0, QTableWidgetItem(f"{book_title} ({author_name})"))
+        self.task_table.setItem(t_row, 1, QTableWidgetItem(export_mode.upper()))
+        
+        pbar = QProgressBar()
+        pbar.setValue(0)
+        self.task_table.setCellWidget(t_row, 2, pbar)
+        
+        st_item = QTableWidgetItem("⏳ 准备下载...")
+        self.task_table.setItem(t_row, 3, st_item)
+        
+        cancel_btn = QPushButton("❌ 取消下载")
+        cancel_btn.setStyleSheet("background-color: #C62828; color: white; border-radius: 3px; font-size: 11px;")
+        cancel_btn.clicked.connect(lambda _, tid=task_id: self.cancel_download_task(tid))
+        self.task_table.setCellWidget(t_row, 4, cancel_btn)
 
-    def on_download_progress(self, current, total, text):
-        self.progress_label.setText(text)
-        if total > 0:
-            self.progress_bar.setMaximum(total)
-            self.progress_bar.setValue(current)
+        self.tasks[task_id] = {
+            "worker": worker,
+            "row": t_row,
+            "save_path": save_path,
+            "title": book_title,
+            "author": author_name,
+            "mode": export_mode,
+            "pbar": pbar,
+            "st_item": st_item,
+            "btn": cancel_btn
+        }
 
-    def on_download_finished(self, save_path):
-        self.progress_label.setText("下载完成！")
-        self.progress_bar.setVisible(False)
-        self.download_btn.setEnabled(True)
-        QMessageBox.information(self, "下载成功", f"小说已成功下载到：\n{save_path}\n\n你现在可以在阅读器中右键打开该文件了！")
+        # 关联信号
+        worker.progress_signal.connect(self.on_task_progress)
+        worker.finished_signal.connect(self.on_task_finished)
+        worker.error_signal.connect(self.on_task_error)
+        worker.cancelled_signal.connect(self.on_task_cancelled)
+        
+        # 启动线程
+        worker.start()
 
-    def on_download_error(self, err_msg):
-        self.progress_label.setText(f"错误: {err_msg}")
-        self.progress_bar.setVisible(False)
-        self.download_btn.setEnabled(True)
-        QMessageBox.critical(self, "下载失败", err_msg)
+        # 更新选项卡标题
+        self.tabs.setTabText(1, f"📥 下载任务与书架 ({len(self.tasks)})")
+        # 自动跳转到下载任务 Tab 查看进度
+        self.tabs.setCurrentIndex(1)
+
+    def cancel_download_task(self, task_id: str):
+        if task_id in self.tasks:
+            info = self.tasks[task_id]
+            info["worker"].cancel()
+            info["st_item"].setText("正在中断连接...")
+            info["btn"].setEnabled(False)
+
+    def on_task_progress(self, task_id: str, current: int, total: int, status_text: str):
+        if task_id in self.tasks:
+            info = self.tasks[task_id]
+            info["st_item"].setText(status_text)
+            if total > 0:
+                info["pbar"].setMaximum(total)
+                info["pbar"].setValue(current)
+
+    def on_task_finished(self, task_id: str, save_path: str):
+        if task_id in self.tasks:
+            info = self.tasks[task_id]
+            from PyQt6.QtGui import QColor
+            info["st_item"].setText("✅ 下载完成并入库书架")
+            info["st_item"].setForeground(QColor("#2E7D32"))
+            info["btn"].setText("✅ 已完成")
+            info["btn"].setEnabled(False)
+            info["btn"].setStyleSheet("background-color: #2E7D32; color: white;")
+            
+            # 自动登记到主书架 ConfigManager
+            parent_win = self.parent()
+            if parent_win and hasattr(parent_win, 'config_manager'):
+                parent_win.config_manager.add_to_bookshelf(save_path, {
+                    "title": info["title"],
+                    "author": info["author"],
+                    "format": info["mode"]
+                })
+                if hasattr(parent_win, 'refresh_bookshelf'):
+                    parent_win.refresh_bookshelf()
+
+    def on_task_error(self, task_id: str, err_msg: str):
+        if task_id in self.tasks:
+            info = self.tasks[task_id]
+            from PyQt6.QtGui import QColor
+            info["st_item"].setText(f"❌ 失败: {err_msg}")
+            info["st_item"].setForeground(QColor("#C62828"))
+            info["btn"].setText("重试")
+            info["btn"].setEnabled(True)
+
+    def on_task_cancelled(self, task_id: str):
+        if task_id in self.tasks:
+            info = self.tasks[task_id]
+            from PyQt6.QtGui import QColor
+            info["st_item"].setText("⛔ 已手动取消")
+            info["st_item"].setForeground(QColor("#888888"))
+            info["btn"].setText("已取消")
+            info["btn"].setEnabled(False)
+            info["btn"].setStyleSheet("background-color: #888888; color: white;")
+

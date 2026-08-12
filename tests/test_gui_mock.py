@@ -132,4 +132,32 @@ def test_search_connectivity_and_cancellation(qapp):
     dialog.cancel_search()
     assert dialog.search_worker.cancel_event.is_set() is True
 
+def test_bookshelf_window_and_import(qapp, tmp_path):
+    from src.ui.bookshelf_window import BookshelfWindow
+    cfg_file = str(tmp_path / "cfg.json")
+    cfg = ConfigManager(config_path=cfg_file)
+    
+    # 1. 创建测试临时文件
+    book_file = tmp_path / "测试小说_张三.txt"
+    book_file.write_text("第1章 开启\n测试内容", encoding="utf-8")
+    
+    # 2. 导入书架
+    cfg.add_to_bookshelf(str(book_file))
+    shelf = cfg.get_bookshelf()
+    assert str(book_file) in shelf
+    assert shelf[str(book_file)]["title"] == "测试小说"
+    assert shelf[str(book_file)]["author"] == "张三"
+    
+    # 3. 实例化主书架窗口
+    b_win = BookshelfWindow(cfg)
+    b_win.show()
+    assert b_win.isVisible() is True
+    assert b_win.table.rowCount() == 1
+    
+    # 4. 测试剔除
+    b_win.remove_book(str(book_file))
+    assert str(book_file) not in cfg.get_bookshelf()
+    assert b_win.table.rowCount() == 0
+
+
 
