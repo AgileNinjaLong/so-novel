@@ -1,147 +1,574 @@
 import os
 import sys
+import re
 import time
-from PyQt6.QtCore import Qt, pyqtSignal
+import threading
+import requests
+from typing import Dict, Any, Optional
+
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QObject
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QListWidget, QListWidgetItem, QFileDialog, QMessageBox,
-    QFrame, QMenu, QHeaderView, QTableWidget, QTableWidgetItem
+    QLabel, QFileDialog, QMessageBox, QTabWidget, QTableWidget,
+    QTableWidgetItem, QHeaderView, QLineEdit, QComboBox, QProgressBar,
+    QSystemTrayIcon, QMenu, QGroupBox, QFormLayout, QKeySequenceEdit, QDoubleSpinBox, QApplication
 )
-from PyQt6.QtGui import QColor, QFont, QIcon, QDragEnterEvent, QDropEvent
+from PyQt6.QtGui import QColor, QFont, QIcon, QDragEnterEvent, QDropEvent, QKeySequence
+
 from src.core.config import ConfigManager
-from src.ui.download_dialog import DownloadDialog
-from src.ui.settings_dialog import SettingsDialog
+from src.core.sonovel_client import SoNovelClient
 from src.core.parser import NovelParser
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_DOWNLOAD_DIR = os.path.join(ROOT_DIR, "downloads")
+
+# ==================== 搜索/下载 工作线程 ====================
+class SearchWorker(QObject):
+    item_found_signal = pyqtSignal(dict)
+    rule_tested_signal = pyqtSignal(int, str, bool, int)
+    status_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(list)
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, client: SoNovelClient, keyword: str):
+        super().__init__()
+        self.client = client
+        self.keyword = keyword
+        self.cancel_event = threading.Event()
+
+    def start(self):
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def cancel(self):
+        self.cancel_event.set()
+
+    def run(self):
+        try:
+            def on_item(item):
+                try: self.item_found_signal.emit(item)
+                except RuntimeError: pass
+
+            def on_status(msg):
+                try: self.status_signal.emit(msg)
+                except RuntimeError: pass
+
+            def on_rule_tested(r_idx, r_name, is_ok, latency_ms):
+                try: self.rule_tested_signal.emit(r_idx, r_name, is_ok, latency_ms)
+                except RuntimeError: pass
+            
+            res = self.client.search(
+                self.keyword, 
+                callback=on_item, 
+                status_callback=on_status, 
+                cancel_event=self.cancel_event,
+                rule_tested_callback=on_rule_tested
+            )
+            try: self.finished_signal.emit(res)
+            except RuntimeError: pass
+        except Exception as e:
+            try: self.error_signal.emit(str(e))
+            except RuntimeError: pass
+
+
+class DownloadWorker(QObject):
+    progress_signal = pyqtSignal(str, int, int, str)
+    finished_signal = pyqtSignal(str, str)
+    error_signal = pyqtSignal(str, str)
+    cancelled_signal = pyqtSignal(str)
+
+    def __init__(self, client: SoNovelClient, task_id: str, book_info: dict, save_path: str, export_mode: str = "txt"):
+        super().__init__()
+        self.client = client
+        self.task_id = task_id
+        self.book_info = book_info
+        self.save_path = save_path
+        self.export_mode = export_mode
+        self.cancel_event = threading.Event()
+        
+        # 物理隔离 Session 与 50 槽位连接池
+        self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50)
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
+        self.session.headers.update(self.client.headers)
+
+    def start(self):
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def cancel(self):
+        self.cancel_event.set()
+
+    def run(self):
+        try:
+            rule = self.book_info["rule"]
+            book_url = self.book_info["url"]
+            book_name = self.book_info.get("bookName", "未知书名")
+            author = self.book_info.get("author", "未知作者")
+            
+            self.progress_signal.emit(self.task_id, 0, 0, "正在解析图书目录...")
+            toc = self.client.get_toc(book_url, rule)
+            if not toc:
+                self.error_signal.emit(self.task_id, "未解析到任何目录章节。")
+                return
+
+            if self.cancel_event.is_set():
+                self.cancelled_signal.emit(self.task_id)
+                return
+
+            total = len(toc)
+            self.progress_signal.emit(self.task_id, 0, total, f"找到 {total} 章，准备高并发下载...")
+            os.makedirs(os.path.dirname(os.path.abspath(self.save_path)), exist_ok=True)
+
+            import concurrent.futures
+            chapter_contents = [None] * total
+            completed = 0
+
+            def _download_task(i, chap):
+                if self.cancel_event.is_set():
+                    return i, None
+                try:
+                    content = self.download_chapter_isolated(chap["url"], rule)
+                    return i, content
+                except Exception as e:
+                    return i, f"下载失败: {e}"
+
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=30)
+            try:
+                futures = {executor.submit(_download_task, i, chap): i for i, chap in enumerate(toc)}
+                for future in concurrent.futures.as_completed(futures):
+                    if self.cancel_event.is_set():
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        self.cancelled_signal.emit(self.task_id)
+                        return
+                    try:
+                        i, content = future.result()
+                        chapter_contents[i] = content
+                        completed += 1
+                        if completed % 5 == 0 or completed == total:
+                            self.progress_signal.emit(self.task_id, completed, total, f"极速下载中: {completed}/{total} 章")
+                    except Exception:
+                        pass
+            finally:
+                if not self.cancel_event.is_set():
+                    executor.shutdown(wait=False)
+
+            if self.cancel_event.is_set():
+                self.cancelled_signal.emit(self.task_id)
+                return
+
+            # 补漏下载
+            failed_indices = [i for i, c in enumerate(chapter_contents) if not c or "下载失败" in c or "解析失败" in c]
+            if failed_indices and not self.cancel_event.is_set():
+                self.progress_signal.emit(self.task_id, total, total, f"正在补全 {len(failed_indices)} 个卡顿章节...")
+                for idx in failed_indices:
+                    if self.cancel_event.is_set():
+                        self.cancelled_signal.emit(self.task_id)
+                        return
+                    chap = toc[idx]
+                    try:
+                        res = self.download_chapter_isolated(chap["url"], rule)
+                        if "下载失败" not in res and "解析失败" not in res:
+                            chapter_contents[idx] = res
+                    except Exception:
+                        pass
+
+            self.progress_signal.emit(self.task_id, total, total, "下载完毕，合成落盘中...")
+
+            # 合成落盘
+            if self.export_mode == "epub":
+                from src.core.epub_builder import EpubBuilder
+                chapters_data = [
+                    {"title": chap["title"], "content": chapter_contents[idx] or ""}
+                    for idx, chap in enumerate(toc)
+                ]
+                EpubBuilder.build_epub(book_name, author, chapters_data, self.save_path)
+            elif self.export_mode == "dir":
+                target_dir = self.save_path
+                os.makedirs(target_dir, exist_ok=True)
+                for idx, chap in enumerate(toc):
+                    safe_chap_title = re.sub(r'[\\/:*?"<>|]', '_', chap['title'])
+                    chap_file_path = os.path.join(target_dir, f"{idx+1:04d}_{safe_chap_title}.txt")
+                    with open(chap_file_path, "w", encoding="utf-8") as f:
+                        f.write(f"{chap['title']}\n\n{chapter_contents[idx] or ''}\n")
+            else: # txt
+                with open(self.save_path, "w", encoding="utf-8") as f:
+                    for idx, chap in enumerate(toc):
+                        f.write(f"\n\n{chap['title']}\n\n{chapter_contents[idx] or ''}\n")
+
+            self.finished_signal.emit(self.task_id, self.save_path)
+        except Exception as e:
+            self.error_signal.emit(self.task_id, f"下载异常: {str(e)}")
+
+    def download_chapter_isolated(self, chapter_url: str, rule: dict) -> str:
+        from lxml import html
+        chap_rule = rule.get("chapter", {})
+        content_parts = []
+        current_url = chapter_url
+        visited = set()
+
+        while current_url and current_url not in visited:
+            if self.cancel_event.is_set():
+                break
+            visited.add(current_url)
+            resp = None
+            for attempt in range(3):
+                if self.cancel_event.is_set():
+                    break
+                try:
+                    resp = self.session.get(current_url, timeout=12)
+                    if resp.status_code == 200:
+                        break
+                except Exception:
+                    if attempt < 2:
+                        time.sleep(0.3)
+
+            if not resp or resp.status_code != 200:
+                return "(本章下载失败)"
+
+            try:
+                if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
+                    resp.encoding = resp.apparent_encoding
+                
+                tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
+                filter_tags = [t.strip() for t in chap_rule.get("filterTag", "").split(',') if t.strip()]
+                for tag in filter_tags:
+                    for match in self.client._select_elements(tree, tag):
+                        match.drop_tree()
+                
+                content_rule = chap_rule.get("content", "")
+                js_code = ""
+                if '@js:' in content_rule:
+                    content_rule, js_code = content_rule.split('@js:', 1)
+
+                content_nodes = self.client._select_elements(tree, content_rule)
+                if not content_nodes:
+                    break
+                    
+                node = content_nodes[0]
+                if js_code:
+                    raw_inner_html = html.tostring(node, encoding='unicode', method='html')
+                    processed_html = self.client._apply_js(raw_inner_html, js_code)
+                    node = html.fromstring(processed_html)
+                
+                for br in node.xpath(".//br"):
+                    br.tail = "\n" + (br.tail or "")
+                for p in node.xpath(".//p"):
+                    p.tail = "\n" + (p.tail or "")
+                    
+                text = node.text_content()
+                filter_txt = chap_rule.get("filterTxt", "")
+                if filter_txt:
+                    text = re.sub(filter_txt, '', text)
+                    
+                content_parts.append("\n".join([line.strip() for line in text.splitlines() if line.strip()]))
+                break
+            except Exception:
+                return "(本章解析失败)"
+                
+        return "\n".join(content_parts) if content_parts else "(本章暂无内容)"
+
+
+# ==================== 主书架全 Tab 窗口 ====================
 class BookshelfWindow(QMainWindow):
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
         self.config_manager = config_manager
-        self.active_stealth_window = None
+        self.client = SoNovelClient()
+        self.active_reading_windows = {}  # file_path -> stealth_window
+        self.download_tasks = {}          # task_id -> task_info
+        self.search_results = []
         
-        self.setWindowTitle("📚 摸鱼阅读器 - 我的藏书与全网书城")
-        self.resize(850, 560)
-        self.setAcceptDrops(True)
+        os.makedirs(DEFAULT_DOWNLOAD_DIR, exist_ok=True)
 
+        self.setWindowTitle("📚 摸鱼看小说 - 全网藏书与下载中心")
+        self.resize(920, 620)
+        self.setAcceptDrops(True)
+        
+        # 加载图标
+        icon_path = os.path.join(ROOT_DIR, "resources", "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
+        self.init_system_tray(icon_path)
         self.init_ui()
         self.refresh_bookshelf()
+
+    def init_system_tray(self, icon_path):
+        if os.path.exists(icon_path):
+            self.tray_icon = QSystemTrayIcon(QIcon(icon_path), self)
+        else:
+            self.tray_icon = QSystemTrayIcon(self)
+
+        self.tray_icon.setToolTip("摸鱼看小说阅读器 (后台静默运行中)")
+        
+        menu = QMenu()
+        show_action = menu.addAction("📚 显示主书架窗口")
+        show_action.triggered.connect(self.show_main_window)
+
+        boss_action = menu.addAction(f"🛡️ 隐身老板键 ({self.config_manager.settings.get('boss_key', 'Alt+Z')})")
+        boss_action.triggered.connect(self.toggle_all_reading_windows)
+
+        menu.addSeparator()
+        quit_action = menu.addAction("❌ 彻底退出程序")
+        quit_action.triggered.connect(self.force_quit_app)
+
+        self.tray_icon.setContextMenu(menu)
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
+        self.tray_icon.show()
+
+    def show_main_window(self):
+        self.show()
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
+        self.raise_()
+        self.activateWindow()
+
+    def on_tray_icon_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 单击托盘图标
+            if self.isVisible():
+                self.hide()
+            else:
+                self.show_main_window()
+
+    def toggle_all_reading_windows(self):
+        for path, win in list(self.active_reading_windows.items()):
+            if win and hasattr(win, 'toggle_boss_key'):
+                win.toggle_boss_key()
 
     def init_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(16, 16, 16, 16)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(12, 12, 12, 12)
 
-        # 1. 顶栏控制区域
-        header_layout = QHBoxLayout()
-        title_label = QLabel("📚 我的摸鱼书架")
-        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #1e1e1e;")
-        
-        self.import_btn = QPushButton("📂 导入本地书籍")
-        self.import_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2E7D32;
-                color: white;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 6px 12px;
+        # 选项卡主控件
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #E0E0E0;
+                background: #FFFFFF;
+                border-radius: 6px;
             }
-            QPushButton:hover {
-                background-color: #1B5E20;
+            QTabBar::tab {
+                background: #F5F5F7;
+                color: #424242;
+                font-weight: bold;
+                padding: 8px 18px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 2px;
+            }
+            QTabBar::tab:selected {
+                background: #FFFFFF;
+                color: #1976D2;
+                border-bottom: 2px solid #1976D2;
             }
         """)
+        main_layout.addWidget(self.tabs)
+
+        # 构建 4 个核心切页
+        self.init_tab_bookshelf()
+        self.init_tab_bookstore()
+        self.init_tab_downloads()
+        self.init_tab_settings()
+
+    # ====== Tab 1: 我的藏书 =====
+    def init_tab_bookshelf(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # 顶栏
+        h = QHBoxLayout()
+        lbl = QLabel("📚 我的摸鱼藏书")
+        lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #212121;")
+        
+        self.import_btn = QPushButton("📂 导入本地电子书 (.txt / .epub)")
+        self.import_btn.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px;")
         self.import_btn.clicked.connect(self.do_import_local_book)
 
-        self.store_btn = QPushButton("🌐 全网书城 / 搜书下载")
-        self.store_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0288D1;
-                color: white;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 6px 12px;
-            }
-            QPushButton:hover {
-                background-color: #01579B;
-            }
-        """)
-        self.store_btn.clicked.connect(self.do_open_bookstore)
+        h.addWidget(lbl)
+        h.addStretch()
+        h.addWidget(self.import_btn)
+        layout.addLayout(h)
 
-        self.settings_btn = QPushButton("⚙️ 偏好设置")
-        self.settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #555555;
-                color: white;
-                border-radius: 4px;
-                padding: 6px 12px;
-            }
-            QPushButton:hover {
-                background-color: #333333;
-            }
-        """)
-        self.settings_btn.clicked.connect(self.do_open_settings)
+        tip = QLabel("💡 提示：可直接拖拽电脑中的小说文件放进来。点击“摸鱼开读”可在右下角隐蔽阅读，主界面不会强制关闭，支持同时打开多本看！")
+        tip.setStyleSheet("color: #616161; font-size: 12px; background: #F0F4F8; padding: 6px 10px; border-radius: 4px;")
+        layout.addWidget(tip)
 
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
-        header_layout.addWidget(self.import_btn)
-        header_layout.addWidget(self.store_btn)
-        header_layout.addWidget(self.settings_btn)
-        main_layout.addLayout(header_layout)
+        self.shelf_table = QTableWidget()
+        self.shelf_table.setColumnCount(6)
+        self.shelf_table.setHorizontalHeaderLabels(["小说名称", "作者", "格式", "加入时间", "阅读进度", "操作"])
+        self.shelf_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.shelf_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.shelf_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.shelf_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.shelf_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.shelf_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.shelf_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.shelf_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.shelf_table.itemDoubleClicked.connect(self.on_shelf_item_double_clicked)
+        layout.addWidget(self.shelf_table)
 
-        # 提示 banner
-        tip_label = QLabel("💡 提示：可直接拖拽电脑中的 .txt / .epub 小说文件放入下方列表入库。双击即可一键开启摸鱼隐蔽阅读！")
-        tip_label.setStyleSheet("color: #666666; font-size: 12px; background-color: #F0F4F8; padding: 6px 10px; border-radius: 4px;")
-        main_layout.addWidget(tip_label)
+        self.tabs.addTab(tab, "📚 我的藏书")
 
-        # 2. 书籍列表表格
-        self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["小说名称", "作者", "格式", "加入时间", "进度", "操作"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.itemDoubleClicked.connect(self.on_item_double_clicked)
-        main_layout.addWidget(self.table)
+    # ====== Tab 2: 全网书城 =====
+    def init_tab_bookstore(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
 
+        h = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("输入小说名或作者发起 24 书源高并发搜索...")
+        self.search_input.returnPressed.connect(self.do_search)
+        
+        self.search_btn = QPushButton("搜索")
+        self.search_btn.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; padding: 6px 14px; border-radius: 4px;")
+        self.search_btn.clicked.connect(self.do_search)
+
+        h.addWidget(self.search_input)
+        h.addWidget(self.search_btn)
+        layout.addLayout(h)
+
+        self.search_table = QTableWidget()
+        self.search_table.setColumnCount(4)
+        self.search_table.setHorizontalHeaderLabels(["书名", "作者", "最新章节", "书源"])
+        self.search_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.search_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.search_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.search_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.search_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.search_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.search_table)
+
+        self.search_status_label = QLabel("")
+        layout.addWidget(self.search_status_label)
+
+        b_layout = QHBoxLayout()
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("📄 单文件 TXT (合并文本)", "txt")
+        self.mode_combo.addItem("📚 EPUB 电子书 (标准打包)", "epub")
+        self.mode_combo.addItem("📂 按章节拆分目录 (离散文件)", "dir")
+
+        self.download_btn = QPushButton("📥 下载选中的小说 (添加任务)")
+        self.download_btn.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px;")
+        self.download_btn.clicked.connect(self.do_add_download_task)
+
+        b_layout.addWidget(QLabel("合成格式:"))
+        b_layout.addWidget(self.mode_combo)
+        b_layout.addWidget(self.download_btn)
+        layout.addLayout(b_layout)
+
+        self.tabs.addTab(tab, "🌐 全网书城")
+
+    # ====== Tab 3: 下载管理 =====
+    def init_tab_downloads(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        lbl = QLabel("📥 多任务下载管理 (专属 Socket 槽位隔离)")
+        lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #333;")
+        layout.addWidget(lbl)
+
+        self.task_table = QTableWidget()
+        self.task_table.setColumnCount(5)
+        self.task_table.setHorizontalHeaderLabels(["小说名称", "格式", "进度条", "状态说明", "操作"])
+        self.task_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.task_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.task_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.task_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.task_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.task_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.task_table)
+
+        self.tabs.addTab(tab, "📥 下载管理 (0)")
+
+    # ====== Tab 4: 系统设置 =====
+    def init_tab_settings(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        group_mode = QGroupBox("模式与全局隐身按键")
+        form_mode = QFormLayout()
+        
+        self.boss_key_edit = QKeySequenceEdit(self)
+        self.boss_key_edit.setKeySequence(QKeySequence(self.config_manager.settings.get("boss_key", "Alt+Z")))
+        self.hk_floating_edit = QKeySequenceEdit(self)
+        self.hk_floating_edit.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_floating", "Ctrl+1")))
+        self.hk_ide_edit = QKeySequenceEdit(self)
+        self.hk_ide_edit.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_ide", "Ctrl+2")))
+        self.hk_cad_edit = QKeySequenceEdit(self)
+        self.hk_cad_edit.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_cad", "Ctrl+3")))
+
+        form_mode.addRow("🛡️ 老板键 (全局隐身):", self.boss_key_edit)
+        form_mode.addRow("📖 极简透明模式:", self.hk_floating_edit)
+        form_mode.addRow("💻 IDE 伪装模式:", self.hk_ide_edit)
+        form_mode.addRow("📐 CAD 伪装模式:", self.hk_cad_edit)
+        group_mode.setLayout(form_mode)
+        layout.addWidget(group_mode)
+
+        group_read = QGroupBox("阅读控制与自动滚动")
+        form_read = QFormLayout()
+        
+        self.hk_next_line = QKeySequenceEdit(self)
+        self.hk_next_line.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_next_line", "Down")))
+        self.hk_prev_line = QKeySequenceEdit(self)
+        self.hk_prev_line.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_prev_line", "Up")))
+        self.hk_next_chap = QKeySequenceEdit(self)
+        self.hk_next_chap.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_next_chap", "PageDown")))
+        self.hk_prev_chap = QKeySequenceEdit(self)
+        self.hk_prev_chap.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_prev_chap", "PageUp")))
+
+        self.hk_toggle_auto = QKeySequenceEdit(self)
+        self.hk_toggle_auto.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_toggle_auto", "Ctrl+Space")))
+
+        self.auto_speed_spin = QDoubleSpinBox(self)
+        self.auto_speed_spin.setRange(1.0, 50.0)
+        self.auto_speed_spin.setSingleStep(1.0)
+        self.auto_speed_spin.setSuffix(" px/s (像素/秒)")
+        self.auto_speed_spin.setValue(float(self.config_manager.settings.get("auto_scroll_speed", 8.0)))
+
+        form_read.addRow("⬇️ 下一行:", self.hk_next_line)
+        form_read.addRow("⬆️ 上一行:", self.hk_prev_line)
+        form_read.addRow("⏭️ 下一章:", self.hk_next_chap)
+        form_read.addRow("⏮️ 上一章:", self.hk_prev_chap)
+        form_read.addRow("▶️ 开启/暂停自动翻页:", self.hk_toggle_auto)
+        form_read.addRow("⏱️ 自动连续滚动速度:", self.auto_speed_spin)
+        group_read.setLayout(form_read)
+        layout.addWidget(group_read)
+
+        save_btn = QPushButton("💾 保存系统设置")
+        save_btn.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px;")
+        save_btn.clicked.connect(self.save_settings_tab)
+        layout.addWidget(save_btn)
+
+        self.tabs.addTab(tab, "⚙️ 系统设置")
+
+    # ====== 藏书刷新与开读 =====
     def refresh_bookshelf(self):
         shelf = self.config_manager.get_bookshelf()
-        self.table.setRowCount(0)
-        
-        # 按加入时间降序排列
+        self.shelf_table.setRowCount(0)
         sorted_items = sorted(shelf.items(), key=lambda x: x[1].get("add_time", ""), reverse=True)
         
         for path, info in sorted_items:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
+            row = self.shelf_table.rowCount()
+            self.shelf_table.insertRow(row)
             
             title_item = QTableWidgetItem(info.get("title", "未知小说"))
             title_item.setData(Qt.ItemDataRole.UserRole, path)
-            self.table.setItem(row, 0, title_item)
+            self.shelf_table.setItem(row, 0, title_item)
+            self.shelf_table.setItem(row, 1, QTableWidgetItem(info.get("author", "未知")))
             
-            self.table.setItem(row, 1, QTableWidgetItem(info.get("author", "未知")))
-            
-            fmt_str = info.get("format", "txt").upper()
-            fmt_item = QTableWidgetItem(fmt_str)
+            fmt_item = QTableWidgetItem(info.get("format", "txt").upper())
             fmt_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(row, 2, fmt_item)
+            self.shelf_table.setItem(row, 2, fmt_item)
+            self.shelf_table.setItem(row, 3, QTableWidgetItem(info.get("add_time", "-")))
             
-            self.table.setItem(row, 3, QTableWidgetItem(info.get("add_time", "-")))
-            
-            # 计算阅读进度
             hist = self.config_manager.history.get(path, {})
             c_idx = hist.get("chapter_idx", 0)
             prog_str = f"第 {c_idx + 1} 章" if c_idx > 0 else "未开始"
             prog_item = QTableWidgetItem(prog_str)
             prog_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(row, 4, prog_item)
+            self.shelf_table.setItem(row, 4, prog_item)
 
-            # 操作控件容器
             btn_box = QWidget()
             btn_layout = QHBoxLayout(btn_box)
             btn_layout.setContentsMargins(4, 2, 4, 2)
@@ -157,23 +584,52 @@ class BookshelfWindow(QMainWindow):
             
             btn_layout.addWidget(read_btn)
             btn_layout.addWidget(remove_btn)
-            self.table.setCellWidget(row, 5, btn_box)
+            self.shelf_table.setCellWidget(row, 5, btn_box)
 
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+    def on_shelf_item_double_clicked(self, item):
+        row = item.row()
+        title_item = self.shelf_table.item(row, 0)
+        if title_item:
+            path = title_item.data(Qt.ItemDataRole.UserRole)
+            if path: self.start_reading(path)
 
-    def dropEvent(self, event: QDropEvent):
-        urls = event.mimeData().urls()
-        imported_count = 0
-        for url in urls:
-            file_path = url.toLocalFile()
-            if os.path.exists(file_path) and (file_path.endswith('.txt') or file_path.endswith('.epub') or os.path.isdir(file_path)):
-                self.config_manager.add_to_bookshelf(file_path)
-                imported_count += 1
-        if imported_count > 0:
+    def start_reading(self, file_path: str):
+        """开启摸鱼阅读：主界面保持显示不隐藏，支持同时打开多本小说"""
+        if not os.path.exists(file_path):
+            QMessageBox.warning(self, "文件丢失", f"找不到小说文件：\n{file_path}")
+            self.config_manager.remove_from_bookshelf(file_path)
             self.refresh_bookshelf()
-            QMessageBox.information(self, "导入成功", f"已成功将 {imported_count} 本小说添加到您的摸鱼书架！")
+            return
+
+        self.config_manager.settings["last_file"] = file_path
+        self.config_manager.save_immediately()
+
+        # 检查是否已在活动摸鱼窗口池中
+        if file_path in self.active_reading_windows:
+            win = self.active_reading_windows[file_path]
+            if win and not win.is_boss_hidden:
+                win.show()
+                win.raise_()
+                win.activateWindow()
+                return
+
+        mode = self.config_manager.settings.get("mode", "floating")
+        if mode == "ide_pseudo":
+            from src.ui.ide_pseudo_view import IdePseudoView
+            win = IdePseudoView(self.config_manager, file_path=file_path, bookshelf_window=self)
+        elif mode == "cad_pseudo":
+            from src.ui.cad_pseudo_view import CadPseudoView
+            win = CadPseudoView(self.config_manager, file_path=file_path, bookshelf_window=self)
+        else:
+            from src.ui.floating_view import FloatingView
+            win = FloatingView(self.config_manager, file_path=file_path, bookshelf_window=self)
+
+        self.active_reading_windows[file_path] = win
+        win.show()
+
+    def remove_book(self, file_path: str):
+        self.config_manager.remove_from_bookshelf(file_path)
+        self.refresh_bookshelf()
 
     def do_import_local_book(self):
         files, _ = QFileDialog.getOpenFileNames(self, "选择本地小说文件导入书架", "", "Novel Files (*.txt *.epub);;All Files (*)")
@@ -183,53 +639,336 @@ class BookshelfWindow(QMainWindow):
             self.refresh_bookshelf()
             QMessageBox.information(self, "导入成功", f"已成功导入 {len(files)} 本小说！")
 
-    def do_open_bookstore(self):
-        dlg = DownloadDialog(self)
-        # 连接下载完成信号自动同步到书架
-        dlg.exec()
-        self.refresh_bookshelf()
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls(): event.acceptProposedAction()
 
-    def do_open_settings(self):
-        dlg = SettingsDialog(self.config_manager, self)
-        dlg.exec()
-
-    def on_item_double_clicked(self, item: QTableWidgetItem):
-        row = item.row()
-        title_item = self.table.item(row, 0)
-        if title_item:
-            path = title_item.data(Qt.ItemDataRole.UserRole)
-            if path:
-                self.start_reading(path)
-
-    def start_reading(self, file_path: str):
-        if not os.path.exists(file_path):
-            QMessageBox.warning(self, "文件丢失", f"找不到小说文件，可能已被移动或删除：\n{file_path}")
-            self.config_manager.remove_from_bookshelf(file_path)
+    def dropEvent(self, event: QDropEvent):
+        urls = event.mimeData().urls()
+        count = 0
+        for url in urls:
+            f = url.toLocalFile()
+            if os.path.exists(f) and (f.endswith('.txt') or f.endswith('.epub') or os.path.isdir(f)):
+                self.config_manager.add_to_bookshelf(f)
+                count += 1
+        if count > 0:
             self.refresh_bookshelf()
+            QMessageBox.information(self, "拖拽导入成功", f"已成功添加 {count} 本小说到您的书架！")
+
+    # ====== 搜书逻辑 =====
+    def setup_connectivity_view(self):
+        self.search_view_mode = "connectivity"
+        self.search_table.setRowCount(0)
+        self.search_table.setColumnCount(4)
+        self.search_table.setHorizontalHeaderLabels(["书源名称", "连通状态", "响应延迟", "规则位次"])
+        
+        self.rule_test_states = {}
+        for idx, rule in enumerate(self.client.rules):
+            r_idx = rule.get('rule_index', idx)
+            r_name = rule.get("name", "未知书源")
+            self.rule_test_states[r_idx] = {
+                "name": r_name, "rule_index": r_idx, "is_ok": False,
+                "is_tested": False, "latency_ms": 999999, "latency_str": "-"
+            }
+        self.refresh_connectivity_table()
+
+    def on_rule_tested(self, r_idx, r_name, is_ok, latency_ms):
+        if getattr(self, 'search_view_mode', '') != "connectivity": return
+        if r_idx in self.rule_test_states:
+            st = self.rule_test_states[r_idx]
+            st["is_tested"] = True
+            st["is_ok"] = is_ok
+            st["latency_ms"] = latency_ms if is_ok else 999999
+            st["latency_str"] = f"{latency_ms} ms" if is_ok else "超时"
+        self.refresh_connectivity_table()
+
+    def refresh_connectivity_table(self):
+        if getattr(self, 'search_view_mode', '') != "connectivity": return
+        sorted_states = list(self.rule_test_states.values())
+        def sort_key(st):
+            if st["is_ok"]: priority = 0
+            elif st["is_tested"]: priority = 1
+            else: priority = 2
+            return (priority, st["latency_ms"], st["rule_index"])
+
+        sorted_states.sort(key=sort_key)
+        self.search_table.setRowCount(len(sorted_states))
+        for row, st in enumerate(sorted_states):
+            self.search_table.setItem(row, 0, QTableWidgetItem(st["name"]))
+            if st["is_ok"]:
+                status_item = QTableWidgetItem("✅ 连通成功")
+                status_item.setForeground(QColor("#2E7D32"))
+            elif st["is_tested"]:
+                status_item = QTableWidgetItem("❌ 超时/不可用")
+                status_item.setForeground(QColor("#C62828"))
+            else:
+                status_item = QTableWidgetItem("⏳ 连接测试中...")
+                status_item.setForeground(QColor("#888888"))
+                
+            self.search_table.setItem(row, 1, status_item)
+            self.search_table.setItem(row, 2, QTableWidgetItem(st["latency_str"]))
+            self.search_table.setItem(row, 3, QTableWidgetItem(f"规则 #{st['rule_index'] + 1}"))
+
+    def setup_results_view(self):
+        self.search_view_mode = "results"
+        self.search_table.setRowCount(0)
+        self.search_table.setColumnCount(4)
+        self.search_table.setHorizontalHeaderLabels(["书名", "作者", "最新章节", "书源"])
+
+    def do_search(self):
+        now = time.time()
+        if hasattr(self, 'last_search_trigger_time') and now - self.last_search_trigger_time < 0.3:
+            return
+        self.last_search_trigger_time = now
+
+        if getattr(self, 'is_searching', False):
+            self.cancel_search()
             return
 
-        # 保存为上次打开的文件
-        self.config_manager.settings["last_file"] = file_path
-        self.config_manager.save_immediately()
+        keyword = self.search_input.text().strip()
+        if not keyword: return
 
-        mode = self.config_manager.settings.get("mode", "floating")
+        self.is_searching = True
+        self.search_btn.setText("取消")
+        self.search_results.clear()
         
-        # 隐藏书架窗口
-        self.hide()
+        self.setup_connectivity_view()
+        self.search_status_label.setText("正在全量并发测试 24 书源连通性...")
+        
+        self.search_worker = SearchWorker(self.client, keyword)
+        self.search_worker.rule_tested_signal.connect(self.on_rule_tested)
+        self.search_worker.item_found_signal.connect(self.on_search_item_found)
+        self.search_worker.status_signal.connect(self.on_search_status)
+        self.search_worker.finished_signal.connect(self.on_search_finished)
+        self.search_worker.error_signal.connect(self.on_search_error)
+        self.search_worker.start()
 
-        # 根据配置唤醒摸鱼伪装模式
-        if mode == "ide_pseudo":
-            from src.ui.ide_pseudo_view import IdePseudoView
-            self.active_stealth_window = IdePseudoView(self.config_manager, file_path=file_path, bookshelf_window=self)
-        elif mode == "cad_pseudo":
-            from src.ui.cad_pseudo_view import CadPseudoView
-            self.active_stealth_window = CadPseudoView(self.config_manager, file_path=file_path, bookshelf_window=self)
+    def cancel_search(self):
+        if hasattr(self, 'search_worker') and self.search_worker:
+            self.search_worker.cancel()
+            self.search_status_label.setText("正在强行打断连接...")
+            self.search_btn.setEnabled(False)
+
+    def on_search_item_found(self, item):
+        if getattr(self, 'search_view_mode', '') == "connectivity":
+            self.setup_results_view()
+        row = self.search_table.rowCount()
+        self.search_table.insertRow(row)
+        self.search_table.setItem(row, 0, QTableWidgetItem(item.get("bookName", "未知")))
+        self.search_table.setItem(row, 1, QTableWidgetItem(item.get("author", "未知")))
+        self.search_table.setItem(row, 2, QTableWidgetItem(item.get("latestChapter", "")))
+        self.search_table.setItem(row, 3, QTableWidgetItem(item.get("sourceName", "未知")))
+        self.search_results.append(item)
+        self.search_status_label.setText(f"搜索流式输出中... 已发现 {len(self.search_results)} 个结果")
+
+    def on_search_status(self, msg):
+        self.search_status_label.setText(msg)
+
+    def on_search_finished(self, sorted_results):
+        self.is_searching = False
+        if getattr(self, 'search_view_mode', '') == "connectivity":
+            self.setup_results_view()
+        self.search_results = sorted_results
+        self.search_table.setRowCount(len(self.search_results))
+        for row, item in enumerate(self.search_results):
+            self.search_table.setItem(row, 0, QTableWidgetItem(item.get("bookName", "未知")))
+            self.search_table.setItem(row, 1, QTableWidgetItem(item.get("author", "未知")))
+            self.search_table.setItem(row, 2, QTableWidgetItem(item.get("latestChapter", "")))
+            self.search_table.setItem(row, 3, QTableWidgetItem(item.get("sourceName", "未知")))
+            
+        self.search_btn.setEnabled(True)
+        self.search_btn.setText("搜索")
+        self.search_status_label.setText(f"搜索完成，找到 {len(self.search_results)} 个可用结果。")
+
+    def on_search_error(self, err_msg):
+        self.is_searching = False
+        self.search_status_label.setText(f"搜索错误: {err_msg}")
+        self.search_btn.setEnabled(True)
+        self.search_btn.setText("搜索")
+
+    # ====== 下载管理 =====
+    def do_add_download_task(self):
+        selected = self.search_table.selectedItems()
+        if not selected:
+            QMessageBox.warning(self, "提示", "请先在列表中选中一本小说。")
+            return
+
+        row = selected[0].row()
+        book_info = self.search_results[row]
+        export_mode = self.mode_combo.currentData() or "txt"
+
+        book_title = book_info.get('bookName', '未知')
+        author_name = book_info.get('author', '未知')
+
+        # 默认保存路径放置在项目根目录下的 downloads 文件夹中
+        if export_mode == "epub":
+            default_filename = f"{book_title}_{author_name}.epub"
+            default_save_path = os.path.join(DEFAULT_DOWNLOAD_DIR, default_filename)
+            save_path, _ = QFileDialog.getSaveFileName(self, "选择 EPUB 保存路径", default_save_path, "EPUB Files (*.epub)")
+        elif export_mode == "dir":
+            default_filename = f"{book_title}_{author_name}"
+            default_save_path = os.path.join(DEFAULT_DOWNLOAD_DIR, default_filename)
+            save_path = QFileDialog.getExistingDirectory(self, "选择保存文件夹", default_save_path)
         else:
-            from src.ui.floating_view import FloatingView
-            self.active_stealth_window = FloatingView(self.config_manager, file_path=file_path, bookshelf_window=self)
+            default_filename = f"{book_title}_{author_name}.txt"
+            default_save_path = os.path.join(DEFAULT_DOWNLOAD_DIR, default_filename)
+            save_path, _ = QFileDialog.getSaveFileName(self, "选择 TXT 保存路径", default_save_path, "Text Files (*.txt)")
 
-        self.active_stealth_window.show()
+        if not save_path: return
 
-    def remove_book(self, file_path: str):
-        self.config_manager.remove_from_bookshelf(file_path)
-        self.refresh_bookshelf()
+        task_id = f"task_{int(time.time() * 1000)}"
+        worker = DownloadWorker(self.client, task_id, book_info, save_path, export_mode=export_mode)
+        
+        t_row = self.task_table.rowCount()
+        self.task_table.insertRow(t_row)
+        self.task_table.setItem(t_row, 0, QTableWidgetItem(f"{book_title} ({author_name})"))
+        self.task_table.setItem(t_row, 1, QTableWidgetItem(export_mode.upper()))
+        
+        pbar = QProgressBar()
+        pbar.setValue(0)
+        self.task_table.setCellWidget(t_row, 2, pbar)
+        
+        st_item = QTableWidgetItem("⏳ 准备下载...")
+        self.task_table.setItem(t_row, 3, st_item)
+        
+        cancel_btn = QPushButton("❌ 取消下载")
+        cancel_btn.setStyleSheet("background-color: #C62828; color: white; border-radius: 3px; font-size: 11px;")
+        cancel_btn.clicked.connect(lambda _, tid=task_id: self.cancel_download_task(tid))
+        self.task_table.setCellWidget(t_row, 4, cancel_btn)
+
+        self.download_tasks[task_id] = {
+            "worker": worker, "row": t_row, "save_path": save_path,
+            "title": book_title, "author": author_name, "mode": export_mode,
+            "pbar": pbar, "st_item": st_item, "btn": cancel_btn
+        }
+
+        worker.progress_signal.connect(self.on_task_progress)
+        worker.finished_signal.connect(self.on_task_finished)
+        worker.error_signal.connect(self.on_task_error)
+        worker.cancelled_signal.connect(self.on_task_cancelled)
+        worker.start()
+
+        self.tabs.setTabText(2, f"📥 下载管理 ({len(self.download_tasks)})")
+        self.tabs.setCurrentIndex(2)
+
+    def cancel_download_task(self, task_id: str):
+        if task_id in self.download_tasks:
+            info = self.download_tasks[task_id]
+            info["worker"].cancel()
+            info["st_item"].setText("正在打断连接...")
+            info["btn"].setEnabled(False)
+
+    def on_task_progress(self, task_id: str, current: int, total: int, status_text: str):
+        if task_id in self.download_tasks:
+            info = self.download_tasks[task_id]
+            info["st_item"].setText(status_text)
+            if total > 0:
+                info["pbar"].setMaximum(total)
+                info["pbar"].setValue(current)
+
+    def on_task_finished(self, task_id: str, save_path: str):
+        if task_id in self.download_tasks:
+            info = self.download_tasks[task_id]
+            info["st_item"].setText("✅ 已自动入库我的藏书")
+            info["st_item"].setForeground(QColor("#2E7D32"))
+            info["btn"].setText("✅ 完成")
+            info["btn"].setEnabled(False)
+            info["btn"].setStyleSheet("background-color: #2E7D32; color: white;")
+            
+            # 自动登记到 ConfigManager 藏书库
+            self.config_manager.add_to_bookshelf(save_path, {
+                "title": info["title"], "author": info["author"], "format": info["mode"]
+            })
+            self.refresh_bookshelf()
+
+    def on_task_error(self, task_id: str, err_msg: str):
+        if task_id in self.download_tasks:
+            info = self.download_tasks[task_id]
+            info["st_item"].setText(f"❌ 错误: {err_msg}")
+            info["st_item"].setForeground(QColor("#C62828"))
+            info["btn"].setText("重试")
+            info["btn"].setEnabled(True)
+
+    def on_task_cancelled(self, task_id: str):
+        if task_id in self.download_tasks:
+            info = self.download_tasks[task_id]
+            info["st_item"].setText("⛔ 已手动取消")
+            info["st_item"].setForeground(QColor("#888888"))
+            info["btn"].setText("已取消")
+            info["btn"].setEnabled(False)
+            info["btn"].setStyleSheet("background-color: #888888; color: white;")
+
+    # ====== 系统设置页 =====
+    def save_settings_tab(self):
+        boss_key = self.boss_key_edit.keySequence().toString()
+        hk_floating = self.hk_floating_edit.keySequence().toString()
+        hk_ide = self.hk_ide_edit.keySequence().toString()
+        hk_cad = self.hk_cad_edit.keySequence().toString()
+        
+        keys = [boss_key, hk_floating, hk_ide, hk_cad]
+        valid_keys = [k for k in keys if k]
+        if len(valid_keys) != len(set(valid_keys)):
+            QMessageBox.critical(self, "防冲突警示", "检测到存在重复绑定的模式/老板键快捷键，请修改！")
+            return
+
+        self.config_manager.settings["boss_key"] = boss_key
+        self.config_manager.settings["hk_floating"] = hk_floating
+        self.config_manager.settings["hk_ide"] = hk_ide
+        self.config_manager.settings["hk_cad"] = hk_cad
+        
+        self.config_manager.settings["hk_next_line"] = self.hk_next_line.keySequence().toString()
+        self.config_manager.settings["hk_prev_line"] = self.hk_prev_line.keySequence().toString()
+        self.config_manager.settings["hk_next_chap"] = self.hk_next_chap.keySequence().toString()
+        self.config_manager.settings["hk_prev_chap"] = self.hk_prev_chap.keySequence().toString()
+        self.config_manager.settings["hk_toggle_auto"] = self.hk_toggle_auto.keySequence().toString()
+        self.config_manager.settings["auto_scroll_speed"] = self.auto_speed_spin.value()
+
+        self.config_manager.save_immediately()
+        QMessageBox.information(self, "设置成功", "系统设置与快捷键已成功保存！")
+
+    # ====== 最小化托盘与防呆关闭事件 =====
+    def changeEvent(self, event):
+        if event.type() == event.Type.WindowStateChange:
+            if self.isMinimized():
+                # 最小化时隐藏主界面，不在 Windows 任务栏显示图标，只在托盘驻留
+                QTimer.singleShot(0, self.hide)
+        super().changeEvent(event)
+
+    def closeEvent(self, event):
+        """关闭防呆保护：如果当前有正在隐蔽摸鱼阅读的小说，弹窗展示名册警示"""
+        active_titles = []
+        for path, win in list(self.active_reading_windows.items()):
+            if win and win.isVisible() and getattr(win, 'book', None):
+                active_titles.append(win.book.title)
+
+        if active_titles:
+            book_list_str = "\n".join([f" • {t}" for t in active_titles])
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("🛡️ 防呆警示 - 摸鱼阅读中")
+            msg_box.setText(f"检测到当前有 {len(active_titles)} 本小说正在右下角摸鱼阅读中：\n{book_list_str}\n\n请选择关闭处理方式：")
+            
+            b_keep = msg_box.addButton("保持主界面打开", QMessageBox.ButtonRole.RejectRole)
+            b_tray = msg_box.addButton("最小化至托盘(后台继续阅读)", QMessageBox.ButtonRole.AcceptRole)
+            b_close_all = msg_box.addButton("强行关闭全部窗口", QMessageBox.ButtonRole.DestructiveRole)
+            
+            msg_box.exec()
+            clicked = msg_box.clickedButton()
+            
+            if clicked == b_keep:
+                event.ignore()
+            elif clicked == b_tray:
+                event.ignore()
+                self.hide()
+            elif clicked == b_close_all:
+                for path, win in list(self.active_reading_windows.items()):
+                    if win: win.close()
+                event.accept()
+        else:
+            # 没有在看的小说时，关闭动作默认隐藏到系统托盘
+            event.ignore()
+            self.hide()
+
+    def force_quit_app(self):
+        """托盘彻底退出"""
+        for path, win in list(self.active_reading_windows.items()):
+            if win: win.close()
+        QApplication.instance().quit()

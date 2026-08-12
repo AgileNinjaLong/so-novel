@@ -119,18 +119,20 @@ def test_auto_scroll_feature(qapp, tmp_path):
     assert view.auto_scroll_timer.isActive() is False
 
 def test_search_connectivity_and_cancellation(qapp):
-    from src.ui.download_dialog import DownloadDialog
-    dialog = DownloadDialog()
-    dialog.search_input.setText("测试")
+    from src.ui.bookshelf_window import BookshelfWindow
+    from src.core.config import ConfigManager
+    cfg = ConfigManager()
+    b_win = BookshelfWindow(cfg)
+    b_win.search_input.setText("测试")
     
     # 触发搜索
-    dialog.do_search()
-    assert dialog.is_searching is True
-    assert dialog.search_btn.text() == "取消"
+    b_win.do_search()
+    assert b_win.is_searching is True
+    assert b_win.search_btn.text() == "取消"
     
-    # 模拟用户在连通性测试/连接途中中途取消
-    dialog.cancel_search()
-    assert dialog.search_worker.cancel_event.is_set() is True
+    # 模拟用户中途取消搜索
+    b_win.cancel_search()
+    assert b_win.search_worker.cancel_event.is_set() is True
 
 def test_bookshelf_window_and_import(qapp, tmp_path):
     from src.ui.bookshelf_window import BookshelfWindow
@@ -152,12 +154,12 @@ def test_bookshelf_window_and_import(qapp, tmp_path):
     b_win = BookshelfWindow(cfg)
     b_win.show()
     assert b_win.isVisible() is True
-    assert b_win.table.rowCount() == 1
+    assert b_win.shelf_table.rowCount() == 1
     
     # 4. 测试剔除
     b_win.remove_book(str(book_file))
     assert str(book_file) not in cfg.get_bookshelf()
-    assert b_win.table.rowCount() == 0
+    assert b_win.shelf_table.rowCount() == 0
 
 
 
