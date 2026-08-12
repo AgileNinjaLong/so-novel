@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QFileDialog, QMessageBox, QTabWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QLineEdit, QComboBox, QProgressBar,
-    QSystemTrayIcon, QMenu, QGroupBox, QFormLayout, QKeySequenceEdit, QDoubleSpinBox, QApplication, QStyle
+    QSystemTrayIcon, QMenu, QGroupBox, QFormLayout, QKeySequenceEdit, QDoubleSpinBox, QApplication, QStyle, QCheckBox
 )
 from PyQt6.QtGui import QColor, QFont, QIcon, QDragEnterEvent, QDropEvent, QKeySequence
 
@@ -294,6 +294,147 @@ class DownloadWorker(QObject):
         return "\n".join(content_parts) if content_parts else "(本章暂无内容)"
 
 
+class AutoUpdateWorker(QObject):
+    task_progress_signal = pyqtSignal(str, int, int, str)
+    task_finished_signal = pyqtSignal(str, str)
+    task_error_signal = pyqtSignal(str, str)
+    status_signal = pyqtSignal(str)
+
+    def __init__(self, client: SoNovelClient, tasks_to_update: list, db_manager: DatabaseManager):
+        super().__init__()
+        self.client = client
+        self.tasks_to_update = tasks_to_update
+        self.db_manager = db_manager
+        self.cancel_event = threading.Event()
+
+    def start(self):
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def cancel(self):
+        self.cancel_event.set()
+
+    def run(self):
+        if not self.tasks_to_update:
+            return
+
+        self.status_signal.emit(f"🔄 正在自动追更检查 {len(self.tasks_to_update)} 本小说...")
+        
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        session.headers.update(self.client.headers)
+
+        for task in self.tasks_to_update:
+            if self.cancel_event.is_set():
+                break
+
+            task_id = task["task_id"]
+            book_title = task.get("book_title", "未知")
+            book_url = task.get("url", "")
+            rule = task.get("rule", {})
+            existing_total = task.get("progress_total", 0)
+
+            if not book_url or not rule:
+                continue
+
+            self.task_progress_signal.emit(task_id, existing_total, existing_total, "🔄 正在检测最新章节...")
+
+            # 链接超时时间 10s，最多重试 3 次
+            toc = None
+            for attempt in range(3):
+                if self.cancel_event.is_set():
+                    break
+                try:
+                    toc = self.client.get_toc(book_url, rule, cancel_event=self.cancel_event, session=session)
+                    if toc:
+                        break
+                except Exception:
+                    if attempt < 2:
+                        time.sleep(1.0)
+
+            if self.cancel_event.is_set():
+                break
+
+            if not toc:
+                # 提示自动更新失败（网络/书源超时）
+                err_text = "❌ 自动更新失败 (网络/书源超时)"
+                self.task_error_signal.emit(task_id, err_text)
+                self.db_manager.update_task_status(task_id, "ERROR", err_text)
+                continue
+
+            new_total = len(toc)
+            if new_total > existing_total:
+                added_count = new_total - existing_total
+                self.task_progress_signal.emit(task_id, existing_total, new_total, f"发现 {added_count} 章新章节，准备追更...")
+
+                import concurrent.futures
+                chapter_contents = [None] * new_total
+
+                def _download_chap(i, chap):
+                    if self.cancel_event.is_set():
+                        return i, None
+                    try:
+                        resp = session.get(chap["url"], timeout=(4.0, 10.0))
+                        if resp.status_code == 200:
+                            from lxml import html
+                            tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding or resp.apparent_encoding))
+                            content_nodes = self.client._select_elements(tree, rule.get("chapter", {}).get("content", ""))
+                            if content_nodes:
+                                text = content_nodes[0].text_content()
+                                return i, "\n".join([l.strip() for l in text.splitlines() if l.strip()])
+                    except Exception:
+                        pass
+                    return i, "(追更本章暂无内容)"
+
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+                try:
+                    futures = {executor.submit(_download_chap, i, toc[i]): i for i in range(existing_total, new_total)}
+                    for future in concurrent.futures.as_completed(futures):
+                        if self.cancel_event.is_set():
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            return
+                        try:
+                            i, content = future.result()
+                            chapter_contents[i] = content
+                        except Exception:
+                            pass
+                finally:
+                    executor.shutdown(wait=False)
+
+                if self.cancel_event.is_set():
+                    return
+
+                # 追加写入落盘文件
+                save_path = task.get("save_path", "")
+                export_mode = task.get("export_mode", "epub")
+                if save_path and os.path.exists(os.path.dirname(os.path.abspath(save_path))):
+                    if export_mode == "txt" and os.path.exists(save_path):
+                        with open(save_path, "a", encoding="utf-8") as f:
+                            for idx in range(existing_total, new_total):
+                                f.write(f"\n\n{toc[idx]['title']}\n\n{chapter_contents[idx] or ''}\n")
+                    elif export_mode == "dir":
+                        os.makedirs(save_path, exist_ok=True)
+                        for idx in range(existing_total, new_total):
+                            chap = toc[idx]
+                            safe_t = re.sub(r'[\\/:*?"<>|]', '_', chap['title'])
+                            fpath = os.path.join(save_path, f"{idx+1:04d}_{safe_t}.txt")
+                            with open(fpath, "w", encoding="utf-8") as f:
+                                f.write(f"{chap['title']}\n\n{chapter_contents[idx] or ''}\n")
+
+                succ_msg = f"✅ 追更成功 (新增 {added_count} 章，总 {new_total} 章)"
+                self.task_finished_signal.emit(task_id, succ_msg)
+                self.db_manager.update_task_progress(task_id, succ_msg, new_total, new_total)
+                self.db_manager.update_task_status(task_id, "COMPLETED", succ_msg)
+            else:
+                ok_msg = f"✅ 已是最新章节 (共 {existing_total} 章)"
+                self.task_progress_signal.emit(task_id, existing_total, existing_total, ok_msg)
+                self.db_manager.update_task_status(task_id, "COMPLETED", ok_msg)
+
+        session.close()
+        self.status_signal.emit("✅ 自动追更轮询检测完毕")
+
+
 # ==================== 主书架全 Tab 窗口 ====================
 class BookshelfWindow(QMainWindow):
     def __init__(self, config_manager: ConfigManager):
@@ -324,6 +465,37 @@ class BookshelfWindow(QMainWindow):
         self.init_ui()
         self.load_download_tasks_from_db()
 
+        # 自动追更定时器：每 30 分钟轮询检测一次，软件启动 2 秒后默认执行第一次
+        self.auto_update_timer = QTimer(self)
+        self.auto_update_timer.setInterval(30 * 60 * 1000)
+        self.auto_update_timer.timeout.connect(self.trigger_auto_update_check)
+        self.auto_update_timer.start()
+
+        QTimer.singleShot(2000, self.trigger_auto_update_check)
+
+    def trigger_auto_update_check(self):
+        """自动追更检索：软件开启默认执行一次，之后每 30 分钟轮询一次"""
+        tasks = self.db_manager.get_all_tasks()
+        auto_tasks = [t for t in tasks if t.get("is_auto_update") == 1]
+        if not auto_tasks:
+            return
+
+        valid_auto_tasks = []
+        for t in auto_tasks:
+            tid = t["task_id"]
+            if tid in self.download_tasks and self.download_tasks[tid].get("worker"):
+                continue
+            valid_auto_tasks.append(t)
+
+        if not valid_auto_tasks:
+            return
+
+        self.auto_worker = AutoUpdateWorker(self.client, valid_auto_tasks, self.db_manager)
+        self.auto_worker.task_progress_signal.connect(self.on_task_progress)
+        self.auto_worker.task_finished_signal.connect(self.on_task_finished)
+        self.auto_worker.task_error_signal.connect(self.on_task_error)
+        self.auto_worker.start()
+
     def load_download_tasks_from_db(self):
         """启动时从 SQLite 数据库恢复并落库展现所有历史下载任务"""
         tasks = self.db_manager.get_all_tasks()
@@ -337,14 +509,31 @@ class BookshelfWindow(QMainWindow):
             status_text = t.get("status_text", "✅ 已完成")
             progress_current = t.get("progress_current", 0)
             progress_total = t.get("progress_total", 0)
+            is_auto = t.get("is_auto_update", 0) == 1
             book_info = t.get("book_info", {})
 
             t_row = self.task_table.rowCount()
             self.task_table.insertRow(t_row)
 
-            title_item = QTableWidgetItem(f"{book_title} ({author_name})")
+            title_item = QTableWidgetItem()
             title_item.setData(Qt.ItemDataRole.UserRole, task_id)
             title_item.setData(Qt.ItemDataRole.UserRole + 1, t.get("url", ""))
+
+            def _apply_title_style(item, b_title, a_name, is_checked):
+                if is_checked:
+                    item.setText(f"[🔄 追更中] {b_title} ({a_name})")
+                    item.setForeground(QColor("#7C4DFF"))  # 专属高亮紫色
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                else:
+                    item.setText(f"{b_title} ({a_name})")
+                    item.setForeground(QColor("#FFFFFF"))
+                    font = item.font()
+                    font.setBold(False)
+                    item.setFont(font)
+
+            _apply_title_style(title_item, book_title, author_name, is_auto)
             self.task_table.setItem(t_row, 0, title_item)
             self.task_table.setItem(t_row, 1, QTableWidgetItem(export_mode.upper()))
 
@@ -367,6 +556,22 @@ class BookshelfWindow(QMainWindow):
             btn_layout = QHBoxLayout(btn_box)
             btn_layout.setContentsMargins(2, 2, 2, 2)
             btn_layout.setSpacing(6)
+
+            chk_auto = QCheckBox("🔄 追更")
+            chk_auto.setToolTip("勾选后将开启后台独立线程每 30 分钟自动检查并增量更新最新章节")
+            chk_auto.setStyleSheet("color: #64B5F6; font-size: 11px; font-weight: bold;")
+            chk_auto.setChecked(is_auto)
+
+            def _make_toggled(tid, item, b_title, a_name):
+                def _on_toggled(checked):
+                    val = 1 if checked else 0
+                    self.db_manager.set_auto_update(tid, val)
+                    if tid in self.download_tasks:
+                        self.download_tasks[tid]["is_auto_update"] = val
+                    _apply_title_style(item, b_title, a_name, checked)
+                return _on_toggled
+
+            chk_auto.toggled.connect(_make_toggled(task_id, title_item, book_title, author_name))
 
             action_btn = QPushButton()
             action_btn.setFixedWidth(70)
@@ -399,6 +604,7 @@ class BookshelfWindow(QMainWindow):
             del_btn.setStyleSheet("background-color: #555555; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
             del_btn.clicked.connect(lambda _, tid=task_id: self.remove_download_task(tid))
 
+            btn_layout.addWidget(chk_auto)
             btn_layout.addWidget(action_btn)
             btn_layout.addWidget(del_btn)
             self.task_table.setCellWidget(t_row, 4, btn_box)
@@ -408,7 +614,7 @@ class BookshelfWindow(QMainWindow):
                 "title": book_title, "author": author_name, "mode": export_mode,
                 "url": t.get("url", ""), "source_name": t.get("source_name", "未知"),
                 "pbar": pbar, "st_item": st_item, "btn": action_btn, "del_btn": del_btn,
-                "book_info": book_info
+                "book_info": book_info, "is_auto_update": 1 if is_auto else 0
             }
 
         self.tabs.setTabText(2, f"📥 下载管理 ({len(self.download_tasks)})")
@@ -1104,6 +1310,34 @@ class BookshelfWindow(QMainWindow):
         btn_layout.setContentsMargins(2, 2, 2, 2)
         btn_layout.setSpacing(6)
 
+        chk_auto = QCheckBox("🔄 追更")
+        chk_auto.setToolTip("勾选后将开启后台独立线程每 30 分钟自动检查并增量更新最新章节")
+        chk_auto.setStyleSheet("color: #64B5F6; font-size: 11px; font-weight: bold;")
+        chk_auto.setChecked(False)
+
+        def _apply_new_title_style(item, b_title, a_name, is_checked):
+            if is_checked:
+                item.setText(f"[🔄 追更中] {b_title} ({a_name})")
+                item.setForeground(QColor("#7C4DFF"))  # 专属高亮紫色
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            else:
+                item.setText(f"{b_title} ({a_name})")
+                item.setForeground(QColor("#FFFFFF"))
+                font = item.font()
+                font.setBold(False)
+                item.setFont(font)
+
+        def _on_new_auto_toggled(checked):
+            val = 1 if checked else 0
+            self.db_manager.set_auto_update(task_id, val)
+            if task_id in self.download_tasks:
+                self.download_tasks[task_id]["is_auto_update"] = val
+            _apply_new_title_style(title_item, book_title, author_name, checked)
+
+        chk_auto.toggled.connect(_on_new_auto_toggled)
+
         cancel_btn = QPushButton("❌ 取消")
         cancel_btn.setFixedWidth(70)
         cancel_btn.setFixedHeight(26)
@@ -1116,6 +1350,7 @@ class BookshelfWindow(QMainWindow):
         del_btn.setStyleSheet("background-color: #555555; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
         del_btn.clicked.connect(lambda _, tid=task_id: self.remove_download_task(tid))
 
+        btn_layout.addWidget(chk_auto)
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(del_btn)
         self.task_table.setCellWidget(t_row, 4, btn_box)

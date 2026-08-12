@@ -39,12 +39,33 @@ class DatabaseManager:
                     status_text TEXT,
                     progress_current INTEGER DEFAULT 0,
                     progress_total INTEGER DEFAULT 0,
+                    is_auto_update INTEGER DEFAULT 0,
+                    last_update_check TEXT,
                     rule_json TEXT,
                     book_info_json TEXT,
                     create_time TEXT,
                     update_time TEXT
                 )
             """)
+            # 兼容旧数据库的字段升级
+            cursor.execute("PRAGMA table_info(download_tasks)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "is_auto_update" not in columns:
+                cursor.execute("ALTER TABLE download_tasks ADD COLUMN is_auto_update INTEGER DEFAULT 0")
+            if "last_update_check" not in columns:
+                cursor.execute("ALTER TABLE download_tasks ADD COLUMN last_update_check TEXT")
+            conn.commit()
+
+    def set_auto_update(self, task_id: str, is_auto_update: int):
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE download_tasks SET
+                    is_auto_update = ?,
+                    update_time = ?
+                WHERE task_id = ?
+            """, (1 if is_auto_update else 0, now_str, task_id))
             conn.commit()
 
     def add_or_update_task(self, task: Dict[str, Any]):
@@ -55,13 +76,14 @@ class DatabaseManager:
                 INSERT INTO download_tasks (
                     task_id, book_title, author, url, source_name, export_mode,
                     save_path, status, status_text, progress_current, progress_total,
-                    rule_json, book_info_json, create_time, update_time
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_auto_update, last_update_check, rule_json, book_info_json, create_time, update_time
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
                     status=excluded.status,
                     status_text=excluded.status_text,
                     progress_current=excluded.progress_current,
                     progress_total=excluded.progress_total,
+                    is_auto_update=excluded.is_auto_update,
                     update_time=excluded.update_time
             """, (
                 task["task_id"],
@@ -75,6 +97,8 @@ class DatabaseManager:
                 task.get("status_text", "⏳ 准备下载..."),
                 task.get("progress_current", 0),
                 task.get("progress_total", 0),
+                1 if task.get("is_auto_update") else 0,
+                task.get("last_update_check", ""),
                 json.dumps(task.get("rule", {}), ensure_ascii=False),
                 json.dumps(task.get("book_info", {}), ensure_ascii=False),
                 task.get("create_time", now_str),
