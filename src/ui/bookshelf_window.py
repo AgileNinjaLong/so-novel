@@ -46,6 +46,10 @@ class SearchWorker(QObject):
 
     def cancel(self):
         self.cancel_event.set()
+        try:
+            self.session.close()  # 强行关闭底层物理 Socket，打断阻塞中的 HTTP 请求
+        except Exception:
+            pass
 
     def run(self):
         try:
@@ -102,6 +106,10 @@ class DownloadWorker(QObject):
 
     def cancel(self):
         self.cancel_event.set()
+        try:
+            self.session.close()  # 强行关闭底层物理 Socket，打断阻塞中的 HTTP 请求
+        except Exception:
+            pass
 
     def run(self):
         try:
