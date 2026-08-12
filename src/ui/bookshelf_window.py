@@ -341,29 +341,90 @@ class BookshelfWindow(QMainWindow):
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(12, 12, 12, 12)
 
-        # 选项卡主控件
-        self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
+        # 统一全局纯正黑色科技风 QSS 样式表 (字体纯白高对比)
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #121214;
+            }
+            QWidget {
+                background-color: #121214;
+                color: #FFFFFF;
+                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+            }
             QTabWidget::pane {
-                border: 1px solid #E0E0E0;
-                background: #FFFFFF;
+                border: 1px solid #2D2D3A;
+                background: #18181C;
                 border-radius: 6px;
             }
             QTabBar::tab {
-                background: #F5F5F7;
-                color: #424242;
+                background: #252530;
+                color: #B0B0C0;
                 font-weight: bold;
-                padding: 8px 18px;
+                font-size: 13px;
+                padding: 10px 20px;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
-                margin-right: 2px;
+                margin-right: 3px;
             }
             QTabBar::tab:selected {
-                background: #FFFFFF;
-                color: #1976D2;
-                border-bottom: 2px solid #1976D2;
+                background: #18181C;
+                color: #64B5F6;
+                border-bottom: 3px solid #64B5F6;
+            }
+            QTableWidget {
+                background-color: #18181C;
+                color: #FFFFFF;
+                gridline-color: #2D2D3A;
+                border: 1px solid #2D2D3A;
+                border-radius: 4px;
+                selection-background-color: #0D47A1;
+                selection-color: #FFFFFF;
+            }
+            QHeaderView::section {
+                background-color: #252530;
+                color: #64B5F6;
+                font-weight: bold;
+                padding: 6px;
+                border: 1px solid #2D2D3A;
+            }
+            QLineEdit, QComboBox, QKeySequenceEdit, QDoubleSpinBox {
+                background-color: #282836;
+                color: #FFFFFF;
+                border: 1px solid #3F3F56;
+                border-radius: 4px;
+                padding: 6px 10px;
+            }
+            QLineEdit:focus, QComboBox:focus, QKeySequenceEdit:focus {
+                border: 1px solid #64B5F6;
+            }
+            QGroupBox {
+                color: #64B5F6;
+                font-weight: bold;
+                border: 1px solid #3F3F56;
+                border-radius: 6px;
+                margin-top: 10px;
+                padding-top: 15px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+            QProgressBar {
+                border: 1px solid #3F3F56;
+                border-radius: 4px;
+                text-align: center;
+                background-color: #282836;
+                color: #FFFFFF;
+            }
+            QProgressBar::chunk {
+                background-color: #2E7D32;
+                border-radius: 3px;
             }
         """)
+
+        # 选项卡主控件
+        self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
         # 构建 4 个核心切页
