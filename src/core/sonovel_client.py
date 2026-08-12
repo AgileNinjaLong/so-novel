@@ -374,10 +374,13 @@ class SoNovelClient:
 
         return deduped
 
-    def get_toc(self, book_url: str, rule: dict) -> List[Dict[str, str]]:
+    def get_toc(self, book_url: str, rule: dict, cancel_event: Optional[threading.Event] = None, session: Optional[requests.Session] = None) -> List[Dict[str, str]]:
+        if session is None:
+            session = self.session
+
         toc_rule = rule.get("toc", {})
         chapters = []
-        
+
         toc_url = toc_rule.get("url", "")
         if toc_url and '%s' in toc_url:
             path = urllib.parse.urlparse(book_url).path
@@ -393,15 +396,24 @@ class SoNovelClient:
         visited = set()
 
         while current_url and current_url not in visited:
+            if cancel_event and cancel_event.is_set():
+                break
             visited.add(current_url)
             resp = None
             for attempt in range(3):
+                if cancel_event and cancel_event.is_set():
+                    break
                 try:
-                    resp = self.session.get(current_url, timeout=10)
+                    resp = session.get(current_url, timeout=10)
                     if resp.status_code == 200:
                         break
                 except Exception:
+                    if cancel_event and cancel_event.is_set():
+                        break
                     time.sleep(0.3)
+
+            if cancel_event and cancel_event.is_set():
+                break
 
             if not resp or resp.status_code != 200:
                 break

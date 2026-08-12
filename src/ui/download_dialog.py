@@ -29,6 +29,11 @@ class SearchWorker(QObject):
 
     def cancel(self):
         self.cancel_event.set()
+        try:
+            if hasattr(self, 'client') and hasattr(self.client, 'session'):
+                self.client.session.close()
+        except Exception:
+            pass
 
     def run(self):
         try:
@@ -651,4 +656,18 @@ class DownloadDialog(QDialog):
             info["btn"].setText("已取消")
             info["btn"].setEnabled(False)
             info["btn"].setStyleSheet("background-color: #888888; color: white;")
+
+    def closeEvent(self, event):
+        for tid, info in list(self.tasks.items()):
+            if "worker" in info and hasattr(info["worker"], "cancel"):
+                try:
+                    info["worker"].cancel()
+                except Exception:
+                    pass
+        if hasattr(self, 'search_worker') and self.search_worker:
+            try:
+                self.search_worker.cancel()
+            except Exception:
+                pass
+        super().closeEvent(event)
 

@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QFileDialog, QMessageBox, QTabWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QLineEdit, QComboBox, QProgressBar,
-    QSystemTrayIcon, QMenu, QGroupBox, QFormLayout, QKeySequenceEdit, QDoubleSpinBox, QApplication
+    QSystemTrayIcon, QMenu, QGroupBox, QFormLayout, QKeySequenceEdit, QDoubleSpinBox, QApplication, QStyle
 )
 from PyQt6.QtGui import QColor, QFont, QIcon, QDragEnterEvent, QDropEvent, QKeySequence
 
@@ -26,6 +26,17 @@ else:
     ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEFAULT_DOWNLOAD_DIR = os.path.join(ROOT_DIR, "downloads")
+
+def get_resource_path(relative_path: str) -> str:
+    if getattr(sys, 'frozen', False):
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
+        p = os.path.join(base_path, relative_path)
+        if os.path.exists(p):
+            return p
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        return os.path.join(exe_dir, relative_path)
+    else:
+        return os.path.join(ROOT_DIR, relative_path)
 
 # ==================== 搜索/下载 工作线程 ====================
 class SearchWorker(QObject):
@@ -47,7 +58,8 @@ class SearchWorker(QObject):
     def cancel(self):
         self.cancel_event.set()
         try:
-            self.session.close()  # 强行关闭底层物理 Socket，打断阻塞中的 HTTP 请求
+            if hasattr(self, 'client') and hasattr(self.client, 'session'):
+                self.client.session.close()  # 强行关闭底层物理 Socket，打断阻塞中的 HTTP 请求
         except Exception:
             pass
 
@@ -119,7 +131,7 @@ class DownloadWorker(QObject):
             author = self.book_info.get("author", "未知作者")
             
             self.progress_signal.emit(self.task_id, 0, 0, "正在解析图书目录...")
-            toc = self.client.get_toc(book_url, rule)
+            toc = self.client.get_toc(book_url, rule, cancel_event=self.cancel_event, session=self.session)
             if not toc:
                 self.error_signal.emit(self.task_id, "未解析到任何目录章节。")
                 return
@@ -145,7 +157,7 @@ class DownloadWorker(QObject):
                 except Exception as e:
                     return i, f"下载失败: {e}"
 
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=30)
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=15)
             try:
                 futures = {executor.submit(_download_task, i, chap): i for i, chap in enumerate(toc)}
                 for future in concurrent.futures.as_completed(futures):
@@ -228,7 +240,7 @@ class DownloadWorker(QObject):
                 if self.cancel_event.is_set():
                     break
                 try:
-                    resp = self.session.get(current_url, timeout=12)
+                    resp = self.session.get(current_url, timeout=(3.0, 5.0))
                     if resp.status_code == 200:
                         break
                 except Exception:
@@ -298,8 +310,11 @@ class BookshelfWindow(QMainWindow):
         self.resize(920, 620)
         self.setAcceptDrops(True)
         
-        # 加载图标
-        icon_path = os.path.join(ROOT_DIR, "resources", "icon.png")
+        # 加载图标 (优先使用 get_resource_path 兼容 PyInstaller 打包与源码运行)
+        icon_path = get_resource_path(os.path.join("resources", "icon.png"))
+        if not os.path.exists(icon_path):
+            icon_path = get_resource_path(os.path.join("resources", "icon.ico"))
+
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
@@ -313,12 +328,13 @@ class BookshelfWindow(QMainWindow):
         return self._client
 
     def init_system_tray(self, icon_path):
-        if os.path.exists(icon_path):
-            self.tray_icon = QSystemTrayIcon(QIcon(icon_path), self)
+        if icon_path and os.path.exists(icon_path):
+            icon = QIcon(icon_path)
         else:
-            self.tray_icon = QSystemTrayIcon(self)
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
 
-        self.tray_icon.setToolTip("摸鱼看小说阅读器 (后台静默运行中)")
+        self.tray_icon = QSystemTrayIcon(icon, self)
+        self.tray_icon.setToolTip("📚 摸鱼看小说阅读器 (单击/双击恢复主窗口)")
         
         menu = QMenu()
         show_action = menu.addAction("📚 显示主书架窗口")
@@ -342,8 +358,8 @@ class BookshelfWindow(QMainWindow):
         self.activateWindow()
 
     def on_tray_icon_activated(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 单击托盘图标
-            if self.isVisible():
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            if self.isVisible() and not self.isMinimized():
                 self.hide()
             else:
                 self.show_main_window()
@@ -446,21 +462,25 @@ class BookshelfWindow(QMainWindow):
         self.tabs.currentChanged.connect(self.on_tab_changed)
         main_layout.addWidget(self.tabs)
 
-        # 预先极速构建 Tab 1: 我的藏书
+        # 预先构建所有 Tab 页面，确保 task_table 与 search_table 从启动刻起完全可用
         self.tab_bookshelf = QWidget()
-        self.tabs.addTab(self.tab_bookshelf, "📚 我的藏书")
-        self.init_tab_bookshelf()
-        self.refresh_bookshelf()
-        self.tab_initialized[0] = True
-
-        # 添加延迟占位页 (用户点击时瞬间初始化，实现秒开启)
         self.tab_bookstore = QWidget()
         self.tab_downloads = QWidget()
         self.tab_settings = QWidget()
 
+        self.tabs.addTab(self.tab_bookshelf, "📚 我的藏书")
         self.tabs.addTab(self.tab_bookstore, "🌐 全网书城")
         self.tabs.addTab(self.tab_downloads, "📥 下载管理 (0)")
         self.tabs.addTab(self.tab_settings, "⚙️ 系统设置")
+
+        self.init_tab_bookshelf()
+        self.init_tab_bookstore()
+        self.init_tab_downloads()
+        self.init_tab_settings()
+
+        self.refresh_bookshelf()
+        for i in range(4):
+            self.tab_initialized[i] = True
 
     def on_tab_changed(self, index: int):
         if index == 1 and not self.tab_initialized[1]:
@@ -998,17 +1018,30 @@ class BookshelfWindow(QMainWindow):
         if task_id in self.download_tasks:
             info = self.download_tasks[task_id]
             if "worker" in info and hasattr(info["worker"], "cancel"):
-                info["worker"].cancel()
+                worker = info["worker"]
+                try: worker.progress_signal.disconnect()
+                except Exception: pass
+                try: worker.finished_signal.disconnect()
+                except Exception: pass
+                try: worker.error_signal.disconnect()
+                except Exception: pass
+                try: worker.cancelled_signal.disconnect()
+                except Exception: pass
+                worker.cancel()
                 
             del self.download_tasks[task_id]
-            
-            for r in range(self.task_table.rowCount()):
-                item = self.task_table.item(r, 0)
-                if item and item.data(Qt.ItemDataRole.UserRole) == task_id:
-                    self.task_table.removeRow(r)
-                    break
-                    
-            self.tabs.setTabText(2, f"📥 下载管理 ({len(self.download_tasks)})")
+
+            # 延迟到下一个事件循环处理 removeRow，避免在 del_btn 自身的 clicked 事件句柄中同步销毁 del_btn 导致 Qt 事件循环死锁/卡顿
+            def _remove_row():
+                if hasattr(self, 'task_table') and self.task_table:
+                    for r in range(self.task_table.rowCount()):
+                        item = self.task_table.item(r, 0)
+                        if item and item.data(Qt.ItemDataRole.UserRole) == task_id:
+                            self.task_table.removeRow(r)
+                            break
+                    self.tabs.setTabText(2, f"📥 下载管理 ({len(self.download_tasks)})")
+
+            QTimer.singleShot(0, _remove_row)
 
     def on_task_progress(self, task_id: str, current: int, total: int, status_text: str):
         if task_id in self.download_tasks:
@@ -1082,7 +1115,8 @@ class BookshelfWindow(QMainWindow):
     def changeEvent(self, event):
         if event.type() == event.Type.WindowStateChange:
             if self.isMinimized():
-                # 最小化时隐藏主界面，不在 Windows 任务栏显示图标，只在托盘驻留
+                if hasattr(self, 'tray_icon') and self.tray_icon:
+                    self.tray_icon.show()
                 QTimer.singleShot(0, self.hide)
         super().changeEvent(event)
 
@@ -1121,6 +1155,14 @@ class BookshelfWindow(QMainWindow):
 
     def quit_application(self):
         """彻底干净退出软件，释放所有后台监听线程与资源，拒绝僵尸进程"""
+        for tid, info in list(getattr(self, 'download_tasks', {}).items()):
+            if "worker" in info and hasattr(info["worker"], "cancel"):
+                try: info["worker"].cancel()
+                except Exception: pass
+        if hasattr(self, 'search_worker') and self.search_worker:
+            try: self.search_worker.cancel()
+            except Exception: pass
+
         for path, win in list(self.active_reading_windows.items()):
             if win:
                 try: win.close()
@@ -1138,7 +1180,7 @@ class BookshelfWindow(QMainWindow):
 
         self.config_manager.save_immediately()
         QApplication.quit()
-        sys.exit(0)
+        os._exit(0)
 
     def force_quit_app(self):
         """托盘彻底退出"""
