@@ -20,7 +20,11 @@ from src.core.sonovel_client import SoNovelClient
 from src.core.parser import NovelParser
 from src.core.version import __version__, FULL_VERSION_STRING, RELEASE_DATE
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if getattr(sys, 'frozen', False):
+    ROOT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 DEFAULT_DOWNLOAD_DIR = os.path.join(ROOT_DIR, "downloads")
 
 # ==================== 搜索/下载 工作线程 ====================

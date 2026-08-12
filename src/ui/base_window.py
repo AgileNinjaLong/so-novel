@@ -436,6 +436,7 @@ class BaseStealthWindow(QWidget):
 
         menu = QMenu(self)
         bookshelf_action = menu.addAction("📚 返回主书架")
+        exit_reading_action = menu.addAction("🚪 退出当前摸鱼模式")
         menu.addSeparator()
         open_action = menu.addAction("📂 打开本地电子书 (TXT/EPUB/PDF)")
         download_action = menu.addAction("🌐 搜索/下载网络小说 (SoNovel)")
@@ -455,19 +456,23 @@ class BaseStealthWindow(QWidget):
         settings_action = menu.addAction("⚙️ 快捷键绑定设置")
         boss_info = menu.addAction(f"🛡️ 隐身键: {self.config_mgr.settings.get('boss_key', 'Alt+Z')}")
         boss_info.setEnabled(False)
-        quit_action = menu.addAction("❌ 退出软件")
+        quit_action = menu.addAction("❌ 彻底退出软件")
 
         action = menu.exec(event.globalPos())
         if action == bookshelf_action:
             self.stop_auto_scroll()
-            self.hide()
             if self.bookshelf_window:
                 self.bookshelf_window.refresh_bookshelf()
-                self.bookshelf_window.show()
-            else:
-                from src.ui.bookshelf_window import BookshelfWindow
-                self.bookshelf_window = BookshelfWindow(self.config_mgr)
-                self.bookshelf_window.show()
+                self.bookshelf_window.show_main_window()
+        elif action == exit_reading_action:
+            self.stop_auto_scroll()
+            if self.bookshelf_window and hasattr(self.bookshelf_window, 'active_reading_windows'):
+                for path, win in list(self.bookshelf_window.active_reading_windows.items()):
+                    if win == self:
+                        del self.bookshelf_window.active_reading_windows[path]
+                self.bookshelf_window.refresh_bookshelf()
+                self.bookshelf_window.show_main_window()
+            self.close()
         elif action == open_action:
             self.is_dialog_open = True
             file_path, _ = QFileDialog.getOpenFileName(
