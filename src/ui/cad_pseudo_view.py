@@ -1,6 +1,6 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTextEdit, QVBoxLayout, QLabel, QFrame
-from PyQt6.QtGui import QFont, QWheelEvent, QKeyEvent
+from PyQt6.QtGui import QFont, QWheelEvent, QKeyEvent, QMouseEvent, QContextMenuEvent
 from src.ui.base_window import BaseStealthWindow
 
 class CADCommandLineEdit(QTextEdit):
@@ -22,6 +22,60 @@ class CADCommandLineEdit(QTextEdit):
             super().keyPressEvent(event)
             return
         self.parent_view.keyPressEvent(event)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if self.parent_view and event.button() == Qt.MouseButton.LeftButton:
+            parent_pos = self.mapTo(self.parent_view, event.pos())
+            pe = QMouseEvent(
+                event.type(),
+                parent_pos.toPointF(),
+                event.globalPosition(),
+                event.button(),
+                event.buttons(),
+                event.modifiers()
+            )
+            self.parent_view.mousePressEvent(pe)
+            event.accept()
+            return
+        elif self.parent_view and event.button() == Qt.MouseButton.RightButton:
+            parent_pos = self.mapTo(self.parent_view, event.pos())
+            cme = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, parent_pos.toPoint(), event.globalPosition().toPoint())
+            self.parent_view.contextMenuEvent(cme)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.parent_view:
+            parent_pos = self.mapTo(self.parent_view, event.pos())
+            pe = QMouseEvent(
+                event.type(),
+                parent_pos.toPointF(),
+                event.globalPosition(),
+                event.button(),
+                event.buttons(),
+                event.modifiers()
+            )
+            self.parent_view.mouseMoveEvent(pe)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if self.parent_view and event.button() == Qt.MouseButton.LeftButton:
+            parent_pos = self.mapTo(self.parent_view, event.pos())
+            pe = QMouseEvent(
+                event.type(),
+                parent_pos.toPointF(),
+                event.globalPosition(),
+                event.button(),
+                event.buttons(),
+                event.modifiers()
+            )
+            self.parent_view.mouseReleaseEvent(pe)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 class CADPseudoView(BaseStealthWindow):
     def __init__(self, config_manager, parent=None, bookshelf_window=None):
