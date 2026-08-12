@@ -380,7 +380,6 @@ class SoNovelClient:
         
         toc_url = toc_rule.get("url", "")
         if toc_url and '%s' in toc_url:
-            # 从路径中提取最后一个连续数字作为小说 ID (兼容诸如笔趣阁365等站点的特殊目录结构)
             path = urllib.parse.urlparse(book_url).path
             m = re.findall(r'\d+', path)
             if m:
@@ -395,8 +394,19 @@ class SoNovelClient:
 
         while current_url and current_url not in visited:
             visited.add(current_url)
+            resp = None
+            for attempt in range(3):
+                try:
+                    resp = self.session.get(current_url, timeout=10)
+                    if resp.status_code == 200:
+                        break
+                except Exception:
+                    time.sleep(0.3)
+
+            if not resp or resp.status_code != 200:
+                break
+
             try:
-                resp = self.session.get(current_url, timeout=10)
                 if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                     resp.encoding = resp.apparent_encoding
                 

@@ -937,7 +937,10 @@ class BookshelfWindow(QMainWindow):
         
         t_row = self.task_table.rowCount()
         self.task_table.insertRow(t_row)
-        self.task_table.setItem(t_row, 0, QTableWidgetItem(f"{book_title} ({author_name})"))
+        
+        title_item = QTableWidgetItem(f"{book_title} ({author_name})")
+        title_item.setData(Qt.ItemDataRole.UserRole, task_id)
+        self.task_table.setItem(t_row, 0, title_item)
         self.task_table.setItem(t_row, 1, QTableWidgetItem(export_mode.upper()))
         
         pbar = QProgressBar()
@@ -947,15 +950,27 @@ class BookshelfWindow(QMainWindow):
         st_item = QTableWidgetItem("⏳ 准备下载...")
         self.task_table.setItem(t_row, 3, st_item)
         
-        cancel_btn = QPushButton("❌ 取消下载")
+        btn_box = QWidget()
+        btn_layout = QHBoxLayout(btn_box)
+        btn_layout.setContentsMargins(2, 2, 2, 2)
+        btn_layout.setSpacing(4)
+
+        cancel_btn = QPushButton("❌ 取消")
         cancel_btn.setStyleSheet("background-color: #C62828; color: white; border-radius: 3px; font-size: 11px;")
         cancel_btn.clicked.connect(lambda _, tid=task_id: self.cancel_download_task(tid))
-        self.task_table.setCellWidget(t_row, 4, cancel_btn)
+
+        del_btn = QPushButton("🗑️ 清除")
+        del_btn.setStyleSheet("background-color: #555555; color: white; border-radius: 3px; font-size: 11px;")
+        del_btn.clicked.connect(lambda _, tid=task_id: self.remove_download_task(tid))
+
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(del_btn)
+        self.task_table.setCellWidget(t_row, 4, btn_box)
 
         self.download_tasks[task_id] = {
             "worker": worker, "row": t_row, "save_path": save_path,
             "title": book_title, "author": author_name, "mode": export_mode,
-            "pbar": pbar, "st_item": st_item, "btn": cancel_btn
+            "pbar": pbar, "st_item": st_item, "btn": cancel_btn, "del_btn": del_btn
         }
 
         worker.progress_signal.connect(self.on_task_progress)
@@ -973,6 +988,22 @@ class BookshelfWindow(QMainWindow):
             info["worker"].cancel()
             info["st_item"].setText("正在打断连接...")
             info["btn"].setEnabled(False)
+
+    def remove_download_task(self, task_id: str):
+        if task_id in self.download_tasks:
+            info = self.download_tasks[task_id]
+            if "worker" in info and hasattr(info["worker"], "cancel"):
+                info["worker"].cancel()
+                
+            del self.download_tasks[task_id]
+            
+            for r in range(self.task_table.rowCount()):
+                item = self.task_table.item(r, 0)
+                if item and item.data(Qt.ItemDataRole.UserRole) == task_id:
+                    self.task_table.removeRow(r)
+                    break
+                    
+            self.tabs.setTabText(2, f"📥 下载管理 ({len(self.download_tasks)})")
 
     def on_task_progress(self, task_id: str, current: int, total: int, status_text: str):
         if task_id in self.download_tasks:
