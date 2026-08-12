@@ -41,11 +41,14 @@ class SoNovelClient:
                         with open(full_path, 'r', encoding='utf-8') as f:
                             data = json.load(f)
                             if isinstance(data, list):
-                                self.rules.extend(data)
+                                for rule in data:
+                                    # 过滤掉已禁用的书源，确保全量书源数完全精确
+                                    if not rule.get("disabled", False):
+                                        self.rules.append(rule)
                     except Exception as e:
                         print(f"Error loading rule file {file_name}: {e}")
         
-        # 赋予每一个规则固定的序号位次，用于确定性排序
+        # 赋予每一个生效规则固定的序号位次 (0 ~ N-1)，用于确定性排序
         for idx, r in enumerate(self.rules):
             r['rule_index'] = idx
 
