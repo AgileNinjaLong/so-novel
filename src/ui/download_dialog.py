@@ -9,6 +9,7 @@ from src.core.sonovel_client import SoNovelClient
 
 class SearchWorker(QObject):
     item_found_signal = pyqtSignal(dict)
+    rule_tested_signal = pyqtSignal(int, str, bool, int)
     status_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
@@ -40,12 +41,19 @@ class SearchWorker(QObject):
                     self.status_signal.emit(msg)
                 except RuntimeError:
                     pass
+
+            def on_rule_tested(r_idx, r_name, is_ok, latency_ms):
+                try:
+                    self.rule_tested_signal.emit(r_idx, r_name, is_ok, latency_ms)
+                except RuntimeError:
+                    pass
             
             res = self.client.search(
                 self.keyword, 
                 callback=on_item, 
                 status_callback=on_status, 
-                cancel_event=self.cancel_event
+                cancel_event=self.cancel_event,
+                rule_tested_callback=on_rule_tested
             )
             try:
                 self.finished_signal.emit(res)
@@ -219,6 +227,45 @@ class DownloadDialog(QDialog):
 
         self.results = []
 
+    def setup_connectivity_view(self):
+        """初始化表格为显眼的书源连通性测试模式视角"""
+        self.table_view_mode = "connectivity"
+        self.table.setRowCount(0)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["书源名称", "连通状态", "响应延迟", "规则位次"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        
+        # 预先填充全量 25 个书源信息
+        self.rule_row_map = {}
+        from PyQt6.QtGui import QColor
+        for idx, rule in enumerate(self.client.rules):
+            r_name = rule.get("name", "未知书源")
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(r_name))
+            
+            status_item = QTableWidgetItem("⏳ 连接测试中...")
+            status_item.setForeground(QColor("#888888"))
+            self.table.setItem(row, 1, status_item)
+            self.table.setItem(row, 2, QTableWidgetItem("-"))
+            self.table.setItem(row, 3, QTableWidgetItem(f"规则 #{rule.get('rule_index', idx) + 1}"))
+            
+            self.rule_row_map[rule.get('rule_index', idx)] = row
+
+    def setup_results_view(self):
+        """恢复表格为图书搜索结果视角"""
+        self.table_view_mode = "results"
+        self.table.setRowCount(0)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["书名", "作者", "最新章节", "书源"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+
     def do_search(self):
         if getattr(self, 'is_searching', False):
             self.cancel_search()
@@ -231,16 +278,36 @@ class DownloadDialog(QDialog):
         self.is_searching = True
         self.search_btn.setText("取消")
         self.search_btn.setEnabled(True)
-        self.table.setRowCount(0)
         self.results.clear()
-        self.progress_label.setText("正在连接书源并测试连通性...")
+        
+        # 初始化显眼的书源表格预检视图
+        self.setup_connectivity_view()
+        self.progress_label.setText("正在全量并发测试书源连通性...")
         
         self.search_worker = SearchWorker(self.client, keyword)
+        self.search_worker.rule_tested_signal.connect(self.on_rule_tested)
         self.search_worker.item_found_signal.connect(self.on_item_found)
         self.search_worker.status_signal.connect(self.on_search_status)
         self.search_worker.finished_signal.connect(self.on_search_finished)
         self.search_worker.error_signal.connect(self.on_search_error)
         self.search_worker.start()
+
+    def on_rule_tested(self, r_idx, r_name, is_ok, latency_ms):
+        if getattr(self, 'table_view_mode', '') != "connectivity":
+            return
+        row = self.rule_row_map.get(r_idx)
+        if row is not None and row < self.table.rowCount():
+            from PyQt6.QtGui import QColor
+            status_item = self.table.item(row, 1)
+            latency_item = self.table.item(row, 2)
+            if is_ok:
+                status_item.setText("✅ 连通成功")
+                status_item.setForeground(QColor("#2E7D32")) # 绿色
+                latency_item.setText(f"{latency_ms} ms")
+            else:
+                status_item.setText("❌ 超时/不可用")
+                status_item.setForeground(QColor("#C62828")) # 红色
+                latency_item.setText("超时")
 
     def cancel_search(self):
         if hasattr(self, 'search_worker') and self.search_worker:
@@ -249,6 +316,9 @@ class DownloadDialog(QDialog):
             self.search_btn.setEnabled(False)
 
     def on_item_found(self, item):
+        if getattr(self, 'table_view_mode', '') == "connectivity":
+            self.setup_results_view()
+            
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setItem(row, 0, QTableWidgetItem(item.get("bookName", "未知")))
@@ -264,6 +334,9 @@ class DownloadDialog(QDialog):
 
     def on_search_finished(self, sorted_results):
         self.is_searching = False
+        if getattr(self, 'table_view_mode', '') == "connectivity":
+            self.setup_results_view()
+
         self.results = sorted_results
         self.table.setRowCount(0)
         self.table.setRowCount(len(self.results))

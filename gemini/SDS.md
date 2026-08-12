@@ -172,10 +172,12 @@ class Book:
 2. **多格式合成器 (`EpubBuilder` & `MultiFileExporter`)**：
    * **TXT 单文件模式**：拼接全局纯文本带章节分界符。
    * **EPUB 电子书模式**：原生产生 `mimetype`, `META-INF/container.xml`, `OEBPS/content.opf`, `OEBPS/toc.ncx` 及 XHTML 章节模板，使用 `zipfile.ZipFile` 打包压制成标准 `.epub` 电子书。
-   3. **书源连通性预检与取消架构 (Connectivity Pre-check & Cancel Architecture)**：
-      * **连通性测试 (`test_connectivity`)**：在发爆检索前，使用 3 秒超时向各个 `rule` 的基准 Host 发起 `HEAD/GET` 连通性测试，并将结果广播至 UI。
-      * **UI 实时状态输出 (`status_signal`)**：避免用户产生卡顿错觉，通过信号向 UI `progress_label` 实时输出类似 `正在测试书源连通性 [5/25]: 笔趣阁...` 的信息。
-      * **线程安全取消中途打断 (`cancel_event`)**：`SearchWorker` 继承 `cancel_event = threading.Event()`。每完成一个站点测试或搜书，严格检测 `is_set()`，若为 True 则立即销毁剩余 Future 任务，断开 HTTP 连接并向 UI 发送取消中断完成信号。
+   3. **表格内嵌入式连通性测试架构 (Table-Embedded Pre-check Architecture)**：
+      * **全量打标与延迟测量 (`test_rule_connectivity`)**：测定连通性的同时记录耗时毫秒数 `latency_ms`。
+      * **UI 双视图切换引擎 (`DownloadDialog`)**：
+        * `init_connectivity_view()`：重置表头为 `[书源名称, 连通状态, 响应延迟, 规则文件]`，预先填充 25 个书源，行状态初始为 `⏳ 连接测试中...`。
+        * 信号 `rule_tested_signal(rule_index, is_ok, latency_ms)`：高并发线程测试完成单个书源时，UI 线程依据 `rule_index` 精准更新对应行的状态文字与单元格前景色。
+        * `init_search_results_view()`：预检结束后，将表头恢复为 `[书名, 作者, 最新章节, 书源名称]`，展现搜索到的匹配图书。
 
 ---
 

@@ -187,28 +187,33 @@ class SoNovelClient:
             pass
         return results
 
-    def test_rule_connectivity(self, rule: dict) -> bool:
-        """对单本书源规则的目标 host 发起快速连通性响应测试 (2.5s 超时)"""
+    def test_rule_connectivity(self, rule: dict) -> tuple[bool, int]:
+        """对单本书源规则的目标 host 发起快速连通性响应测试 (2.5s 超时)，返回 (is_ok, latency_ms)"""
         if rule.get("disabled", False):
-            return False
+            return False, 0
         search_rule = rule.get("search", {})
         url = search_rule.get("url", "")
         if not url:
-            return False
+            return False, 0
             
+        import time
+        t0 = time.time()
         try:
             parsed = urllib.parse.urlparse(url)
             base_url = f"{parsed.scheme}://{parsed.netloc}"
             resp = self.session.head(base_url, timeout=2.5, allow_redirects=True)
-            return resp.status_code < 500
+            latency = int((time.time() - t0) * 1000)
+            return resp.status_code < 500, latency
         except Exception:
             try:
+                t1 = time.time()
                 resp = self.session.get(url.replace('%s', 'test'), timeout=2.5)
-                return resp.status_code < 500
+                latency = int((time.time() - t1) * 1000)
+                return resp.status_code < 500, latency
             except Exception:
-                return False
+                return False, 0
 
-    def search(self, keyword: str, callback=None, status_callback=None, cancel_event=None) -> List[Dict[str, Any]]:
+    def search(self, keyword: str, callback=None, status_callback=None, cancel_event=None, rule_tested_callback=None) -> List[Dict[str, Any]]:
         import concurrent.futures
         import difflib
         
@@ -222,15 +227,21 @@ class SoNovelClient:
             nonlocal completed_count
             if cancel_event and cancel_event.is_set():
                 return None
-            is_ok = self.test_rule_connectivity(rule)
+            is_ok, latency_ms = self.test_rule_connectivity(rule)
+            r_idx = rule.get('rule_index', 999)
+            r_name = rule.get('name', '未知')
+            
+            if rule_tested_callback:
+                rule_tested_callback(r_idx, r_name, is_ok, latency_ms)
+
             with lock:
                 completed_count += 1
                 if status_callback:
-                    status_callback(f"正在并发测试书源连通性 [{completed_count}/{total_rules}]: {rule.get('name', '')} {'[可用]' if is_ok else '[不可用]'}")
+                    status_callback(f"正在表格中并发测试书源连通性 [{completed_count}/{total_rules}] ...")
             return rule if is_ok else None
 
         if status_callback:
-            status_callback(f"开始对全量 {total_rules} 个书源发起高并发连通性预检...")
+            status_callback(f"开始对全量 {total_rules} 个书源发起表格嵌入式高并发预检...")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             futures = {executor.submit(_test_task, rule): rule for rule in self.rules}
@@ -256,7 +267,7 @@ class SoNovelClient:
             return []
 
         if status_callback:
-            status_callback(f"书源连通性预检完成！成功连通 {len(valid_rules)}/{total_rules} 个可用书源，正在检索...")
+            status_callback(f"书源连通性预检完成！成功连通 {len(valid_rules)}/{total_rules} 个可用书源，准备检索...")
 
         # 阶段 2：在可用书源上开展高并发检索
         results = []
