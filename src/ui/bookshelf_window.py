@@ -463,13 +463,12 @@ class BookshelfWindow(QMainWindow):
 
     # ====== Tab 1: 我的藏书 =====
     def init_tab_bookshelf(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        layout = QVBoxLayout(self.tab_bookshelf)
         
         # 顶栏
         h = QHBoxLayout()
         lbl = QLabel("📚 我的摸鱼藏书")
-        lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #212121;")
+        lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #64B5F6;")
         
         self.import_btn = QPushButton("📂 导入本地电子书 (.txt / .epub)")
         self.import_btn.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px;")
@@ -481,7 +480,7 @@ class BookshelfWindow(QMainWindow):
         layout.addLayout(h)
 
         tip = QLabel("💡 提示：可直接拖拽电脑中的小说文件放进来。点击“摸鱼开读”可在右下角隐蔽阅读，主界面不会强制关闭，支持同时打开多本看！")
-        tip.setStyleSheet("color: #616161; font-size: 12px; background: #F0F4F8; padding: 6px 10px; border-radius: 4px;")
+        tip.setStyleSheet("color: #B0C4DE; font-size: 12px; background: #252535; padding: 6px 10px; border-radius: 4px;")
         layout.addWidget(tip)
 
         self.shelf_table = QTableWidget()
@@ -498,12 +497,9 @@ class BookshelfWindow(QMainWindow):
         self.shelf_table.itemDoubleClicked.connect(self.on_shelf_item_double_clicked)
         layout.addWidget(self.shelf_table)
 
-        self.tabs.addTab(tab, "📚 我的藏书")
-
     # ====== Tab 2: 全网书城 =====
     def init_tab_bookstore(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        layout = QVBoxLayout(self.tab_bookstore)
 
         h = QHBoxLayout()
         self.search_input = QLineEdit()
@@ -547,15 +543,12 @@ class BookshelfWindow(QMainWindow):
         b_layout.addWidget(self.download_btn)
         layout.addLayout(b_layout)
 
-        self.tabs.addTab(tab, "🌐 全网书城")
-
     # ====== Tab 3: 下载管理 =====
     def init_tab_downloads(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        layout = QVBoxLayout(self.tab_downloads)
 
         lbl = QLabel("📥 多任务下载管理 (专属 Socket 槽位隔离)")
-        lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #333;")
+        lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #64B5F6;")
         layout.addWidget(lbl)
 
         self.task_table = QTableWidget()
@@ -569,12 +562,9 @@ class BookshelfWindow(QMainWindow):
         self.task_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.task_table)
 
-        self.tabs.addTab(tab, "📥 下载管理 (0)")
-
     # ====== Tab 4: 系统设置 =====
     def init_tab_settings(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        layout = QVBoxLayout(self.tab_settings)
 
         group_mode = QGroupBox("模式与全局隐身按键")
         form_mode = QFormLayout()
@@ -629,8 +619,6 @@ class BookshelfWindow(QMainWindow):
         save_btn.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px;")
         save_btn.clicked.connect(self.save_settings_tab)
         layout.addWidget(save_btn)
-
-        self.tabs.addTab(tab, "⚙️ 系统设置")
 
     # ====== 藏书刷新与开读 =====
     def refresh_bookshelf(self):
