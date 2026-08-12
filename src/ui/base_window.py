@@ -50,6 +50,29 @@ class BaseStealthWindow(QWidget):
             sc.deleteLater()
         self.reading_shortcuts.clear()
 
+        # 模式切换快捷键 (Ctrl+1: 极简透明, Ctrl+2: IDE伪装, Ctrl+3: CAD伪装)
+        hk_floating = self.config_mgr.settings.get("hk_floating", "Ctrl+1")
+        hk_ide = self.config_mgr.settings.get("hk_ide", "Ctrl+2")
+        hk_cad = self.config_mgr.settings.get("hk_cad", "Ctrl+3")
+
+        if hk_floating:
+            sc1 = QShortcut(QKeySequence(hk_floating), self)
+            sc1.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            sc1.activated.connect(lambda: self.switch_to_mode("floating"))
+            self.reading_shortcuts.append(sc1)
+
+        if hk_ide:
+            sc2 = QShortcut(QKeySequence(hk_ide), self)
+            sc2.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            sc2.activated.connect(lambda: self.switch_to_mode("ide_pseudo"))
+            self.reading_shortcuts.append(sc2)
+
+        if hk_cad:
+            sc3 = QShortcut(QKeySequence(hk_cad), self)
+            sc3.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            sc3.activated.connect(lambda: self.switch_to_mode("cad_pseudo"))
+            self.reading_shortcuts.append(sc3)
+
         # 读取自定义阅读控制快捷键
         hk_next_line = self.config_mgr.settings.get("hk_next_line", "Down")
         hk_prev_line = self.config_mgr.settings.get("hk_prev_line", "Up")
@@ -96,6 +119,40 @@ class BaseStealthWindow(QWidget):
         sc_esc = QShortcut(QKeySequence("Esc"), self)
         sc_esc.activated.connect(self.toggle_boss_key)
         self.reading_shortcuts.append(sc_esc)
+
+    def switch_to_mode(self, new_mode: str):
+        """实时响应快捷键，在当前获焦的摸鱼窗口中一键切换伪装模式"""
+        if not self.config_mgr:
+            return
+        curr_mode = self.config_mgr.settings.get("mode", "floating")
+        self.config_mgr.settings["mode"] = new_mode
+        self.config_mgr.save_immediately()
+
+        if curr_mode == new_mode and getattr(self, 'mode_name', '') == new_mode:
+            return
+
+        book_path = self.book.file_path if self.book else None
+
+        if new_mode == "ide_pseudo":
+            from src.ui.ide_pseudo_view import IDEPseudoView
+            new_win = IDEPseudoView(self.config_mgr, bookshelf_window=self.bookshelf_window)
+        elif new_mode == "cad_pseudo":
+            from src.ui.cad_pseudo_view import CADPseudoView
+            new_win = CADPseudoView(self.config_mgr, bookshelf_window=self.bookshelf_window)
+        else:
+            from src.ui.floating_view import FloatingView
+            new_win = FloatingView(self.config_mgr, bookshelf_window=self.bookshelf_window)
+
+        if book_path and os.path.exists(book_path):
+            new_win.load_file(book_path)
+            if self.bookshelf_window and hasattr(self.bookshelf_window, 'active_reading_windows'):
+                self.bookshelf_window.active_reading_windows[book_path] = new_win
+
+        self.stop_auto_scroll()
+        self.close()
+        new_win.show()
+        new_win.raise_()
+        new_win.activateWindow()
 
     def toggle_auto_scroll(self):
         if self.is_auto_scrolling:
@@ -402,7 +459,21 @@ class BaseStealthWindow(QWidget):
             super().keyPressEvent(event)
             return
         self.reset_auto_scroll_timer()
+        
+        # 快捷键精准监听 (Ctrl+1 / Ctrl+2 / Ctrl+3 模式切换)
+        modifiers = event.modifiers()
         key = event.key()
+        if modifiers == Qt.KeyboardModifier.ControlModifier:
+            if key == Qt.Key.Key_1:
+                self.switch_to_mode("floating")
+                return
+            elif key == Qt.Key.Key_2:
+                self.switch_to_mode("ide_pseudo")
+                return
+            elif key == Qt.Key.Key_3:
+                self.switch_to_mode("cad_pseudo")
+                return
+
         if key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
             self.next_line()
         elif key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
@@ -431,15 +502,27 @@ class BaseStealthWindow(QWidget):
         self.update_opacity_by_hover()
 
     def contextMenuEvent(self, event):
-        from PyQt6.QtWidgets import QApplication
-        from src.ui.download_dialog import DownloadDialog
-
         menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #18181C;
+                color: #FFFFFF;
+                border: 1px solid #2D2D3A;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                border-radius: 3px;
+            }
+            QMenu::item:selected {
+                background-color: #0D47A1;
+                color: #FFFFFF;
+            }
+        """)
+
         bookshelf_action = menu.addAction("📚 返回主书架")
         exit_reading_action = menu.addAction("🚪 退出当前摸鱼模式")
-        menu.addSeparator()
-        open_action = menu.addAction("📂 打开本地电子书 (TXT/EPUB/PDF)")
-        download_action = menu.addAction("🌐 搜索/下载网络小说 (SoNovel)")
         
         chap_action = None
         if self.book and self.book.chapters:
@@ -453,10 +536,8 @@ class BaseStealthWindow(QWidget):
         else:
             auto_action = menu.addAction(f"▶️ 开启自动翻页 ({hk_auto})")
 
-        settings_action = menu.addAction("⚙️ 快捷键绑定设置")
-        boss_info = menu.addAction(f"🛡️ 隐身键: {self.config_mgr.settings.get('boss_key', 'Alt+Z')}")
+        boss_info = menu.addAction(f"🛡️ 老板键: {self.config_mgr.settings.get('boss_key', 'Alt+Z')}")
         boss_info.setEnabled(False)
-        quit_action = menu.addAction("❌ 彻底退出软件")
 
         action = menu.exec(event.globalPos())
         if action == bookshelf_action:
@@ -473,35 +554,10 @@ class BaseStealthWindow(QWidget):
                 self.bookshelf_window.refresh_bookshelf()
                 self.bookshelf_window.show_main_window()
             self.close()
-        elif action == open_action:
-            self.is_dialog_open = True
-            file_path, _ = QFileDialog.getOpenFileName(
-                self, "选择电子书", "", "Books (*.txt *.epub *.pdf);;All Files (*)"
-            )
-            self.is_dialog_open = False
-            if file_path:
-                self.load_file(file_path)
-        elif action == download_action:
-            self.is_dialog_open = True
-            self.setWindowOpacity(self.active_opacity)
-            dialog = DownloadDialog(self)
-            dialog.exec()
-            self.is_dialog_open = False
-            self.update_opacity_by_hover()
         elif chap_action and action == chap_action:
             QTimer.singleShot(10, self.open_chapter_dialog)
         elif action == auto_action:
             self.toggle_auto_scroll()
-        elif action == settings_action:
-            self.is_dialog_open = True
-            self.setWindowOpacity(self.active_opacity)
-            dialog = SettingsDialog(self.config_mgr, self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                self.settings_changed_signal.emit()
-            self.is_dialog_open = False
-            self.update_opacity_by_hover()
-        elif action == quit_action:
-            QApplication.instance().quit()
 
     def toggle_boss_key(self):
         if self.isVisible():
