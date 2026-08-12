@@ -274,11 +274,12 @@ class BookshelfWindow(QMainWindow):
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
         self.config_manager = config_manager
-        self.client = SoNovelClient()
+        self._client = None  # 延迟加载 SoNovelClient，提升启动速度
         self.active_reading_windows = {}  # file_path -> stealth_window
         self.download_tasks = {}          # task_id -> task_info
         self.search_results = []
         
+        self.tab_initialized = {0: False, 1: False, 2: False, 3: False}
         os.makedirs(DEFAULT_DOWNLOAD_DIR, exist_ok=True)
 
         self.setWindowTitle("📚 摸鱼看小说 - 全网藏书与下载中心")
@@ -292,7 +293,12 @@ class BookshelfWindow(QMainWindow):
 
         self.init_system_tray(icon_path)
         self.init_ui()
-        self.refresh_bookshelf()
+
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = SoNovelClient()
+        return self._client
 
     def init_system_tray(self, icon_path):
         if os.path.exists(icon_path):
@@ -311,7 +317,7 @@ class BookshelfWindow(QMainWindow):
 
         menu.addSeparator()
         quit_action = menu.addAction("❌ 彻底退出程序")
-        quit_action.triggered.connect(self.force_quit_app)
+        quit_action.triggered.connect(self.quit_application)
 
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.activated.connect(self.on_tray_icon_activated)
@@ -425,13 +431,35 @@ class BookshelfWindow(QMainWindow):
 
         # 选项卡主控件
         self.tabs = QTabWidget()
+        self.tabs.currentChanged.connect(self.on_tab_changed)
         main_layout.addWidget(self.tabs)
 
-        # 构建 4 个核心切页
+        # 预先极速构建 Tab 1: 我的藏书
+        self.tab_bookshelf = QWidget()
+        self.tabs.addTab(self.tab_bookshelf, "📚 我的藏书")
         self.init_tab_bookshelf()
-        self.init_tab_bookstore()
-        self.init_tab_downloads()
-        self.init_tab_settings()
+        self.refresh_bookshelf()
+        self.tab_initialized[0] = True
+
+        # 添加延迟占位页 (用户点击时瞬间初始化，实现秒开启)
+        self.tab_bookstore = QWidget()
+        self.tab_downloads = QWidget()
+        self.tab_settings = QWidget()
+
+        self.tabs.addTab(self.tab_bookstore, "🌐 全网书城")
+        self.tabs.addTab(self.tab_downloads, "📥 下载管理 (0)")
+        self.tabs.addTab(self.tab_settings, "⚙️ 系统设置")
+
+    def on_tab_changed(self, index: int):
+        if index == 1 and not self.tab_initialized[1]:
+            self.init_tab_bookstore()
+            self.tab_initialized[1] = True
+        elif index == 2 and not self.tab_initialized[2]:
+            self.init_tab_downloads()
+            self.tab_initialized[2] = True
+        elif index == 3 and not self.tab_initialized[3]:
+            self.init_tab_settings()
+            self.tab_initialized[3] = True
 
     # ====== Tab 1: 我的藏书 =====
     def init_tab_bookshelf(self):
@@ -1031,7 +1059,7 @@ class BookshelfWindow(QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event):
-        """关闭防呆保护：如果当前有正在隐蔽摸鱼阅读的小说，弹窗展示名册警示"""
+        """关闭防呆保护：如果当前有正在隐蔽摸鱼阅读的小说，弹窗展示名册警示；若确认关闭，彻底干净退出，拒绝残留僵尸进程。"""
         active_titles = []
         for path, win in list(self.active_reading_windows.items()):
             if win and win.isVisible() and getattr(win, 'book', None):
@@ -1045,7 +1073,7 @@ class BookshelfWindow(QMainWindow):
             
             b_keep = msg_box.addButton("保持主界面打开", QMessageBox.ButtonRole.RejectRole)
             b_tray = msg_box.addButton("最小化至托盘(后台继续阅读)", QMessageBox.ButtonRole.AcceptRole)
-            b_close_all = msg_box.addButton("强行关闭全部窗口", QMessageBox.ButtonRole.DestructiveRole)
+            b_close_all = msg_box.addButton("彻底退出程序(关闭全部窗口)", QMessageBox.ButtonRole.DestructiveRole)
             
             msg_box.exec()
             clicked = msg_box.clickedButton()
@@ -1056,16 +1084,34 @@ class BookshelfWindow(QMainWindow):
                 event.ignore()
                 self.hide()
             elif clicked == b_close_all:
-                for path, win in list(self.active_reading_windows.items()):
-                    if win: win.close()
                 event.accept()
+                self.quit_application()
         else:
-            # 没有在看的小说时，关闭动作默认隐藏到系统托盘
+            # 没有在看的小说时，关闭主界面默认隐藏至托盘
             event.ignore()
             self.hide()
 
+    def quit_application(self):
+        """彻底干净退出软件，释放所有后台监听线程与资源，拒绝僵尸进程"""
+        for path, win in list(self.active_reading_windows.items()):
+            if win:
+                try: win.close()
+                except Exception: pass
+        self.active_reading_windows.clear()
+
+        # 停止全局老板键监听线程
+        main_app = QApplication.instance()
+        if hasattr(main_app, 'boss_mgr') and main_app.boss_mgr:
+            try: main_app.boss_mgr.stop()
+            except Exception: pass
+
+        if hasattr(self, 'tray_icon'):
+            self.tray_icon.hide()
+
+        self.config_manager.save_immediately()
+        QApplication.quit()
+        sys.exit(0)
+
     def force_quit_app(self):
         """托盘彻底退出"""
-        for path, win in list(self.active_reading_windows.items()):
-            if win: win.close()
-        QApplication.instance().quit()
+        self.quit_application()

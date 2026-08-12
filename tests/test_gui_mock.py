@@ -123,6 +123,7 @@ def test_search_connectivity_and_cancellation(qapp):
     from src.core.config import ConfigManager
     cfg = ConfigManager()
     b_win = BookshelfWindow(cfg)
+    b_win.tabs.setCurrentIndex(1) # 切换到全网书城选项卡
     b_win.search_input.setText("测试")
     
     # 触发搜索
