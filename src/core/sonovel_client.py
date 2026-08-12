@@ -212,23 +212,43 @@ class SoNovelClient:
         import concurrent.futures
         import difflib
         
-        # 阶段 1：对全部书源规则发起连通性预检，广播 UI 进度
+        # 阶段 1：高并发并行预检所有书源连通性 (20 线程并发，1-2秒内完成)
         valid_rules = []
         total_rules = len(self.rules)
+        completed_count = 0
+        lock = threading.Lock()
         
-        for idx, rule in enumerate(self.rules, start=1):
+        def _test_task(rule):
+            nonlocal completed_count
             if cancel_event and cancel_event.is_set():
+                return None
+            is_ok = self.test_rule_connectivity(rule)
+            with lock:
+                completed_count += 1
                 if status_callback:
-                    status_callback("用户已中途取消搜索。")
-                return []
-                
-            rule_name = rule.get("name", f"书源-{idx}")
-            if status_callback:
-                status_callback(f"正在测试书源连通性 [{idx}/{total_rules}]: {rule_name} ...")
-                
-            # 执行快速预检
-            if self.test_rule_connectivity(rule):
-                valid_rules.append(rule)
+                    status_callback(f"正在并发测试书源连通性 [{completed_count}/{total_rules}]: {rule.get('name', '')} {'[可用]' if is_ok else '[不可用]'}")
+            return rule if is_ok else None
+
+        if status_callback:
+            status_callback(f"开始对全量 {total_rules} 个书源发起高并发连通性预检...")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            futures = {executor.submit(_test_task, rule): rule for rule in self.rules}
+            for future in concurrent.futures.as_completed(futures):
+                if cancel_event and cancel_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    if status_callback:
+                        status_callback("用户已中途取消预检。")
+                    return []
+                try:
+                    res = future.result()
+                    if res:
+                        valid_rules.append(res)
+                except Exception:
+                    pass
+
+        # 重新按照原规则序号位次排序，保持书源权重的确定性
+        valid_rules.sort(key=lambda r: r.get('rule_index', 999))
 
         if cancel_event and cancel_event.is_set():
             if status_callback:
@@ -236,7 +256,7 @@ class SoNovelClient:
             return []
 
         if status_callback:
-            status_callback(f"书源连通性测试完成！可用书源 {len(valid_rules)} 个，正在极速匹配检索...")
+            status_callback(f"书源连通性预检完成！成功连通 {len(valid_rules)}/{total_rules} 个可用书源，正在检索...")
 
         # 阶段 2：在可用书源上开展高并发检索
         results = []

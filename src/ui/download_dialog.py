@@ -30,10 +30,16 @@ class SearchWorker(QObject):
     def run(self):
         try:
             def on_item(item):
-                self.item_found_signal.emit(item)
+                try:
+                    self.item_found_signal.emit(item)
+                except RuntimeError:
+                    pass
 
             def on_status(msg):
-                self.status_signal.emit(msg)
+                try:
+                    self.status_signal.emit(msg)
+                except RuntimeError:
+                    pass
             
             res = self.client.search(
                 self.keyword, 
@@ -41,9 +47,15 @@ class SearchWorker(QObject):
                 status_callback=on_status, 
                 cancel_event=self.cancel_event
             )
-            self.finished_signal.emit(res)
+            try:
+                self.finished_signal.emit(res)
+            except RuntimeError:
+                pass
         except Exception as e:
-            self.error_signal.emit(str(e))
+            try:
+                self.error_signal.emit(str(e))
+            except RuntimeError:
+                pass
 
 class DownloadWorker(QObject):
     progress_signal = pyqtSignal(int, int, str)
