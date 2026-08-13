@@ -252,7 +252,7 @@ class DownloadWorker(QObject):
         except Exception as e:
             self.error_signal.emit(self.task_id, f"下载异常: {str(e)}")
 
-    def download_chapter_isolated(self, chapter_url: str, rule: dict, min_interval: float = 0.2, max_interval: float = 0.4) -> str:
+    def download_chapter_isolated(self, chapter_url: str, rule: dict, min_interval: float = 0.2, max_interval: float = 0.4, chap_title: str = "") -> str:
         from lxml import html
         import random
         chap_rule = rule.get("chapter", {})
@@ -312,6 +312,10 @@ class DownloadWorker(QObject):
                 text = node.text_content()
                 # 【100% 对齐 so-novel-main CrawlUtils.java】清理控制符与私有区不可见字符
                 text = re.sub(r'[\x00-\x1f\x7f-\x9f\u200b-\u200f\ufeff]', '', text)
+
+                # 【100% 对齐 so-novel-main ChapterFilter.java】擦除正文开头重复出现的章节标题
+                if chap_title and text.startswith(chap_title):
+                    text = text[len(chap_title):].lstrip()
 
                 filter_txt = chap_rule.get("filterTxt", "")
                 if filter_txt:
