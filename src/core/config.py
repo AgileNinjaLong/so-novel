@@ -26,6 +26,7 @@ DEFAULT_SETTINGS = {
     "bg_color": "#FFFFFF",
     "line_length": 35,
     "last_file": "",      # 上次打开的图书路径
+    "auto_restore_last_read": True, # 软件启动时自动恢复上次阅读进度（精准至行索引）
     "bookshelf": {}       # 书架列表 path -> {title, author, format, add_time, chapter_index, character_offset}
 }
 

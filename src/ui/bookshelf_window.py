@@ -473,6 +473,12 @@ class BookshelfWindow(QMainWindow):
 
         QTimer.singleShot(2000, self.trigger_auto_update_check)
 
+        # 重定向读取：软件开启时，自动拉起并恢复上次阅读（精准定位至上次的章与行索引）
+        if self.config_manager.settings.get("auto_restore_last_read", True):
+            last_file = self.config_manager.get_last_file()
+            if last_file:
+                QTimer.singleShot(500, lambda: self.start_reading(last_file))
+
     def trigger_auto_update_check(self):
         """自动追更检索：软件开启默认执行一次，之后每 30 分钟轮询一次"""
         tasks = self.db_manager.get_all_tasks()
@@ -943,6 +949,12 @@ class BookshelfWindow(QMainWindow):
         form_mode.addRow("📖 极简透明模式:", self.hk_floating_edit)
         form_mode.addRow("💻 IDE 伪装模式:", self.hk_ide_edit)
         form_mode.addRow("📐 CAD 伪装模式:", self.hk_cad_edit)
+
+        self.auto_restore_chk = QCheckBox("🚀 软件开启时自动重定向拉起上次阅读（精准至章+行索引位置）")
+        self.auto_restore_chk.setStyleSheet("color: #64B5F6; font-size: 12px; font-weight: bold;")
+        self.auto_restore_chk.setChecked(self.config_manager.settings.get("auto_restore_last_read", True))
+        form_mode.addRow("启动自动重定向:", self.auto_restore_chk)
+
         group_mode.setLayout(form_mode)
         layout.addWidget(group_mode)
 
@@ -1542,6 +1554,7 @@ class BookshelfWindow(QMainWindow):
         self.config_manager.settings["hk_prev_chap"] = self.hk_prev_chap.keySequence().toString()
         self.config_manager.settings["hk_toggle_auto"] = self.hk_toggle_auto.keySequence().toString()
         self.config_manager.settings["auto_scroll_speed"] = self.auto_speed_spin.value()
+        self.config_manager.settings["auto_restore_last_read"] = self.auto_restore_chk.isChecked()
 
         self.config_manager.save_immediately()
         QMessageBox.information(self, "设置成功", "系统设置与快捷键已成功保存！")
