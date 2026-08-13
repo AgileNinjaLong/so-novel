@@ -132,6 +132,12 @@ class DownloadWorker(QObject):
             book_name = self.book_info.get("bookName", "未知书名")
             author = self.book_info.get("author", "未知作者")
             
+            # 读取 SoNovel 规则中的 crawl 反爬/限流配置
+            rule_crawl = rule.get("crawl", {}) if isinstance(rule, dict) else {}
+            concurrency = int(rule_crawl.get("concurrency", 20))
+            min_interval = float(rule_crawl.get("minInterval", 200)) / 1000.0
+            max_interval = float(rule_crawl.get("maxInterval", 400)) / 1000.0
+
             self.progress_signal.emit(self.task_id, 0, 0, "正在解析图书目录...")
             toc = self.client.get_toc(book_url, rule, cancel_event=self.cancel_event, session=self.session)
             if not toc:
@@ -143,10 +149,11 @@ class DownloadWorker(QObject):
                 return
 
             total = len(toc)
-            self.progress_signal.emit(self.task_id, 0, total, f"找到 {total} 章，准备高并发下载...")
+            self.progress_signal.emit(self.task_id, 0, total, f"找到 {total} 章，准备下载 (线程数: {concurrency})...")
             os.makedirs(os.path.dirname(os.path.abspath(self.save_path)), exist_ok=True)
 
             import concurrent.futures
+            import random
             chapter_contents = [None] * total
             completed = 0
 
@@ -154,12 +161,15 @@ class DownloadWorker(QObject):
                 if self.cancel_event.is_set():
                     return i, None
                 try:
-                    content = self.download_chapter_isolated(chap["url"], rule)
+                    # 遵循 SoNovel 原生防刷规则：每条线程发请求前进行随机微延时，避开网站反爬机制
+                    if max_interval > 0:
+                        time.sleep(random.uniform(min_interval, max_interval))
+                    content = self.download_chapter_isolated(chap["url"], rule, min_interval, max_interval)
                     return i, content
                 except Exception as e:
                     return i, f"下载失败: {e}"
 
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=15)
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency)
             try:
                 futures = {executor.submit(_download_task, i, chap): i for i, chap in enumerate(toc)}
                 for future in concurrent.futures.as_completed(futures):
@@ -172,7 +182,7 @@ class DownloadWorker(QObject):
                         chapter_contents[i] = content
                         completed += 1
                         if completed % 5 == 0 or completed == total:
-                            self.progress_signal.emit(self.task_id, completed, total, f"极速下载中: {completed}/{total} 章")
+                            self.progress_signal.emit(self.task_id, completed, total, f"下载中: {completed}/{total} 章")
                     except Exception:
                         pass
             finally:
@@ -183,17 +193,18 @@ class DownloadWorker(QObject):
                 self.cancelled_signal.emit(self.task_id)
                 return
 
-            # 补漏下载
+            # 补漏下载（针对首次因反爬限流失败的章节，按 SoNovel 规范进行指数退避重试）
             failed_indices = [i for i, c in enumerate(chapter_contents) if not c or "下载失败" in c or "解析失败" in c]
             if failed_indices and not self.cancel_event.is_set():
-                self.progress_signal.emit(self.task_id, total, total, f"正在补全 {len(failed_indices)} 个卡顿章节...")
+                self.progress_signal.emit(self.task_id, total, total, f"正在退避补全 {len(failed_indices)} 个限流章节...")
                 for idx in failed_indices:
                     if self.cancel_event.is_set():
                         self.cancelled_signal.emit(self.task_id)
                         return
                     chap = toc[idx]
                     try:
-                        res = self.download_chapter_isolated(chap["url"], rule)
+                        time.sleep(random.uniform(1.5, 3.0)) # 退避重试延时
+                        res = self.download_chapter_isolated(chap["url"], rule, min_interval, max_interval)
                         if "下载失败" not in res and "解析失败" not in res:
                             chapter_contents[idx] = res
                     except Exception:
@@ -226,8 +237,9 @@ class DownloadWorker(QObject):
         except Exception as e:
             self.error_signal.emit(self.task_id, f"下载异常: {str(e)}")
 
-    def download_chapter_isolated(self, chapter_url: str, rule: dict) -> str:
+    def download_chapter_isolated(self, chapter_url: str, rule: dict, min_interval: float = 0.2, max_interval: float = 0.4) -> str:
         from lxml import html
+        import random
         chap_rule = rule.get("chapter", {})
         content_parts = []
         current_url = chapter_url
@@ -242,12 +254,12 @@ class DownloadWorker(QObject):
                 if self.cancel_event.is_set():
                     break
                 try:
-                    resp = self.session.get(current_url, timeout=(3.0, 5.0))
+                    resp = self.session.get(current_url, timeout=(4.0, 8.0))
                     if resp.status_code == 200:
                         break
                 except Exception:
                     if attempt < 2:
-                        time.sleep(0.3)
+                        time.sleep(random.uniform(1.0, 2.5))
 
             if not resp or resp.status_code != 200:
                 return "(本章下载失败)"
