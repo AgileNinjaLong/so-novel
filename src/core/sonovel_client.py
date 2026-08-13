@@ -52,6 +52,7 @@ class SoNovelClient:
                                 for rule in data:
                                     # 过滤掉已禁用的书源，确保全量书源数完全精确
                                     if not rule.get("disabled", False):
+                                        rule["rule_file"] = file_name
                                         self.rules.append(rule)
                     except Exception as e:
                         print(f"Error loading rule file {file_name}: {e}")
@@ -235,7 +236,7 @@ class SoNovelClient:
         return results
 
     def test_rule_connectivity(self, rule: dict, cancel_event=None) -> tuple[bool, int]:
-        """对单本书源规则的目标 host 发起快速连通性响应测试 (单次 3.0s 超时)，返回 (is_ok, latency_ms)"""
+        """对单本书源规则的目标 host 发起快速连通性响应测试 (单次 5.0s 超时)，返回 (is_ok, latency_ms)"""
         if cancel_event and cancel_event.is_set():
             return False, 0
         if rule.get("disabled", False):
@@ -244,13 +245,14 @@ class SoNovelClient:
         url = search_rule.get("url", "")
         if not url:
             return False, 0
-            
+
+        ignore_ssl = rule.get("ignoreSsl", False)
         import time
         t0 = time.time()
         try:
             parsed = urllib.parse.urlparse(url)
             base_url = f"{parsed.scheme}://{parsed.netloc}"
-            resp = self.session.get(base_url, timeout=3.0, allow_redirects=True)
+            resp = self.session.get(base_url, timeout=(2.5, 2.5), allow_redirects=True, verify=not ignore_ssl)
             latency = int((time.time() - t0) * 1000)
             if resp.status_code < 500:
                 return True, latency
@@ -263,7 +265,7 @@ class SoNovelClient:
         try:
             t1 = time.time()
             test_url = url.replace('%s', urllib.parse.quote('天'))
-            resp = self.session.get(test_url, timeout=3.0)
+            resp = self.session.get(test_url, timeout=(2.5, 2.5), verify=not ignore_ssl)
             latency = int((time.time() - t1) * 1000)
             return resp.status_code < 500, latency
         except Exception:
