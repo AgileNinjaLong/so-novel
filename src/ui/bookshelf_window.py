@@ -1207,6 +1207,8 @@ class BookshelfWindow(QMainWindow):
         
         self.setup_connectivity_view()
         self.search_status_label.setText("正在全量并发测试 24 书源连通性...")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
         
         self.search_worker = SearchWorker(self.client, keyword)
         self.search_worker.rule_tested_signal.connect(self.on_rule_tested)
@@ -1221,6 +1223,8 @@ class BookshelfWindow(QMainWindow):
             self.search_worker.cancel()
             self.search_status_label.setText("正在强行打断连接...")
             self.search_btn.setEnabled(False)
+            try: QApplication.restoreOverrideCursor()
+            except Exception: pass
 
     def on_search_item_found(self, item):
         if getattr(self, 'search_view_mode', '') == "connectivity":
@@ -1238,6 +1242,8 @@ class BookshelfWindow(QMainWindow):
         self.search_status_label.setText(msg)
 
     def on_search_finished(self, sorted_results):
+        try: QApplication.restoreOverrideCursor()
+        except Exception: pass
         self.is_searching = False
         if getattr(self, 'search_view_mode', '') == "connectivity":
             self.setup_results_view()
@@ -1254,6 +1260,8 @@ class BookshelfWindow(QMainWindow):
         self.search_status_label.setText(f"搜索完成，找到 {len(self.search_results)} 个可用结果。")
 
     def on_search_error(self, err_msg):
+        try: QApplication.restoreOverrideCursor()
+        except Exception: pass
         self.is_searching = False
         self.search_status_label.setText(f"搜索错误: {err_msg}")
         self.search_btn.setEnabled(True)

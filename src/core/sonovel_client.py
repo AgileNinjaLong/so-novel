@@ -22,6 +22,13 @@ RULES_DIR = get_resource_path(os.path.join("SoNovel", "rules"))
 
 _js_lock = threading.Lock()
 _js_ctx = None
+_css_cache = {}
+
+def _get_css_selector(selector: str):
+    if selector not in _css_cache:
+        from lxml.cssselect import CSSSelector
+        _css_cache[selector] = CSSSelector(selector)
+    return _css_cache[selector]
 
 def _get_js_ctx():
     global _js_ctx
