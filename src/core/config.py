@@ -1,9 +1,15 @@
 import json
 import os
+import sys
 from typing import Dict, Any, Optional
 from PyQt6.QtCore import QTimer, QObject
 
-DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".novelread", "config.json")
+if getattr(sys, 'frozen', False):
+    ROOT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+DEFAULT_CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
 DEFAULT_SETTINGS = {
     "boss_key": "Alt+Z",
@@ -73,6 +79,10 @@ class ConfigManager(QObject):
             "author": info.get("author", author) if info else author,
             "format": fmt,
             "add_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "source_type": info.get("source_type", "local") if info else "local",
+            "url": info.get("url", "") if info else "",
+            "rule": info.get("rule", {}) if info else {},
+            "is_auto_update": info.get("is_auto_update", 0) if info else 0,
             "chapter_index": 0,
             "character_offset": 0
         }

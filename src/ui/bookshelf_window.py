@@ -840,19 +840,20 @@ class BookshelfWindow(QMainWindow):
         h.addWidget(self.import_btn)
         layout.addLayout(h)
 
-        tip = QLabel("💡 提示：可直接拖拽电脑中的小说文件放进来。点击“摸鱼开读”可在右下角隐蔽阅读，主界面不会强制关闭，支持同时打开多本看！")
+        tip = QLabel("💡 提示：可直接拖拽电脑中的小说文件放进来。只有通过下载管理下载的网络书籍可开启“自动追更”，本地导入图书无需追更。")
         tip.setStyleSheet("color: #B0C4DE; font-size: 12px; background: #252535; padding: 6px 10px; border-radius: 4px;")
         layout.addWidget(tip)
 
         self.shelf_table = QTableWidget()
-        self.shelf_table.setColumnCount(6)
-        self.shelf_table.setHorizontalHeaderLabels(["小说名称", "作者", "格式", "加入时间", "阅读进度", "操作"])
+        self.shelf_table.setColumnCount(7)
+        self.shelf_table.setHorizontalHeaderLabels(["小说名称", "作者", "来源", "格式", "阅读进度", "自动追更", "操作"])
         self.shelf_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.shelf_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.shelf_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.shelf_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.shelf_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.shelf_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.shelf_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         self.shelf_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.shelf_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.shelf_table.itemDoubleClicked.connect(self.on_shelf_item_double_clicked)
@@ -991,16 +992,46 @@ class BookshelfWindow(QMainWindow):
             row = self.shelf_table.rowCount()
             self.shelf_table.insertRow(row)
             
-            title_item = QTableWidgetItem(info.get("title", "未知小说"))
+            b_title = info.get("title", "未知小说")
+            a_name = info.get("author", "未知")
+            source_type = info.get("source_type", "local")
+            is_auto = info.get("is_auto_update", 0) == 1
+
+            title_item = QTableWidgetItem()
             title_item.setData(Qt.ItemDataRole.UserRole, path)
-            self.shelf_table.setItem(row, 0, title_item)
-            self.shelf_table.setItem(row, 1, QTableWidgetItem(info.get("author", "未知")))
             
+            def _apply_bookshelf_title_style(item, t, a, auto_on):
+                if auto_on:
+                    item.setText(f"[🔄 追更中] {t}")
+                    item.setForeground(QColor("#7C4DFF"))  # 专属高亮紫色
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                else:
+                    item.setText(t)
+                    item.setForeground(QColor("#FFFFFF"))
+                    font = item.font()
+                    font.setBold(False)
+                    item.setFont(font)
+
+            _apply_bookshelf_title_style(title_item, b_title, a_name, is_auto)
+            self.shelf_table.setItem(row, 0, title_item)
+            self.shelf_table.setItem(row, 1, QTableWidgetItem(a_name))
+
+            # 来源 (区分网络下载与本地导入)
+            if source_type == "network":
+                src_item = QTableWidgetItem("🌐 网络下载")
+                src_item.setForeground(QColor("#64B5F6"))
+            else:
+                src_item = QTableWidgetItem("📂 本地导入")
+                src_item.setForeground(QColor("#B0B0C0"))
+            src_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.shelf_table.setItem(row, 2, src_item)
+
             fmt_item = QTableWidgetItem(info.get("format", "txt").upper())
             fmt_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.shelf_table.setItem(row, 2, fmt_item)
-            self.shelf_table.setItem(row, 3, QTableWidgetItem(info.get("add_time", "-")))
-            
+            self.shelf_table.setItem(row, 3, fmt_item)
+
             hist = self.config_manager.history.get(path, {})
             c_idx = hist.get("chapter_idx", 0)
             l_idx = hist.get("line_idx", 0)
@@ -1011,6 +1042,37 @@ class BookshelfWindow(QMainWindow):
             prog_item = QTableWidgetItem(prog_str)
             prog_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.shelf_table.setItem(row, 4, prog_item)
+
+            # 自动追更勾选框 (仅对网络下载图书可用，本地导入图书禁用提示)
+            chk_auto = QCheckBox("🔄 追更")
+            if source_type == "network":
+                chk_auto.setEnabled(True)
+                chk_auto.setToolTip("勾选后将开启后台独立线程每 30 分钟自动检查并增量更新最新章节")
+                chk_auto.setStyleSheet("color: #64B5F6; font-size: 11px; font-weight: bold;")
+                chk_auto.setChecked(is_auto)
+
+                def _make_shelf_toggled(fpath, item, t, a):
+                    def _on_toggled(checked):
+                        val = 1 if checked else 0
+                        shelf_ref = self.config_manager.get_bookshelf()
+                        if fpath in shelf_ref:
+                            shelf_ref[fpath]["is_auto_update"] = val
+                            self.config_manager.save_immediately()
+                        # 同步数据库
+                        task_id = shelf_ref.get(fpath, {}).get("task_id")
+                        if task_id:
+                            self.db_manager.set_auto_update(task_id, val)
+                        _apply_bookshelf_title_style(item, t, a, checked)
+                    return _on_toggled
+
+                chk_auto.toggled.connect(_make_shelf_toggled(path, title_item, b_title, a_name))
+            else:
+                chk_auto.setEnabled(False)
+                chk_auto.setChecked(False)
+                chk_auto.setToolTip("💡 本地导入书籍无原网址，无需自动追更")
+                chk_auto.setStyleSheet("color: #555555; font-size: 11px;")
+
+            self.shelf_table.setCellWidget(row, 5, chk_auto)
 
             btn_box = QWidget()
             btn_layout = QHBoxLayout(btn_box)
@@ -1027,7 +1089,7 @@ class BookshelfWindow(QMainWindow):
             
             btn_layout.addWidget(read_btn)
             btn_layout.addWidget(remove_btn)
-            self.shelf_table.setCellWidget(row, 5, btn_box)
+            self.shelf_table.setCellWidget(row, 6, btn_box)
 
     def on_reading_progress_updated(self, file_path: str, chapter_idx: int, line_idx: int, total_lines: int):
         """主窗口实时槽函数：精准同步更新章 + 行级别的实时阅读进度"""
@@ -1129,7 +1191,7 @@ class BookshelfWindow(QMainWindow):
             imported_count = 0
             for f in files:
                 target_path = self.copy_file_to_downloads(f)
-                self.config_manager.add_to_bookshelf(target_path)
+                self.config_manager.add_to_bookshelf(target_path, {"source_type": "local", "is_auto_update": 0})
                 imported_count += 1
             self.refresh_bookshelf()
             QMessageBox.information(self, "导入成功", f"已成功将 {imported_count} 本小说保存至根目录 downloads/ 并加入书架！")
@@ -1144,7 +1206,7 @@ class BookshelfWindow(QMainWindow):
             f = url.toLocalFile()
             if os.path.exists(f) and (f.endswith('.txt') or f.endswith('.epub') or os.path.isdir(f)):
                 target_path = self.copy_file_to_downloads(f)
-                self.config_manager.add_to_bookshelf(target_path)
+                self.config_manager.add_to_bookshelf(target_path, {"source_type": "local", "is_auto_update": 0})
                 count += 1
         if count > 0:
             self.refresh_bookshelf()
@@ -1482,7 +1544,14 @@ class BookshelfWindow(QMainWindow):
 
             # 自动登记到 ConfigManager 藏书库
             self.config_manager.add_to_bookshelf(save_path, {
-                "title": info["title"], "author": info["author"], "format": info["mode"]
+                "title": info["title"],
+                "author": info["author"],
+                "format": info["mode"],
+                "source_type": "network",
+                "url": info.get("url", ""),
+                "rule": info.get("book_info", {}).get("rule", {}),
+                "task_id": task_id,
+                "is_auto_update": info.get("is_auto_update", 0)
             })
             self.refresh_bookshelf()
 

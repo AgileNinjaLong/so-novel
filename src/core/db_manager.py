@@ -1,11 +1,17 @@
 import sqlite3
 import os
+import sys
 import json
 import time
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 
-DEFAULT_DB_PATH = os.path.join(os.path.expanduser("~"), ".novelread", "novelread.db")
+if getattr(sys, 'frozen', False):
+    ROOT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+DEFAULT_DB_PATH = os.path.join(ROOT_DIR, "novelread.db")
 
 class DatabaseManager:
     """SQLite 数据库管理器：持久化保存小说下载管理任务、书籍信息、作者、下载链接等核心元数据"""
