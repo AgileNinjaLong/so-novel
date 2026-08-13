@@ -297,11 +297,24 @@ class DownloadWorker(QObject):
                     p.tail = "\n" + (p.tail or "")
                     
                 text = node.text_content()
+                # 【100% 对齐 so-novel-main CrawlUtils.java】清理控制符与私有区不可见字符
+                text = re.sub(r'[\x00-\x1f\x7f-\x9f\u200b-\u200f\ufeff]', '', text)
+
                 filter_txt = chap_rule.get("filterTxt", "")
                 if filter_txt:
                     text = re.sub(filter_txt, '', text)
                     
                 content_parts.append("\n".join([line.strip() for line in text.splitlines() if line.strip()]))
+
+                # 章节多页分页 nextPage 处理 (对齐 so-novel-main ChapterParser.java)
+                next_page_rule = chap_rule.get("nextPage", "")
+                if next_page_rule:
+                    next_url = self.client._extract_text(tree, next_page_rule, resp.url)
+                    if next_url and not next_url.startswith("http"):
+                        next_url = urllib.parse.urljoin(resp.url, next_url)
+                    if next_url and next_url != current_url and next_url.startswith("http"):
+                        current_url = next_url
+                        continue
                 break
             except Exception:
                 return "(本章解析失败)"
