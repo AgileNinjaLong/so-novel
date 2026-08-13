@@ -384,41 +384,74 @@ class SoNovelClient:
                 self.connectivity_cache["valid_rule_indices"] = [r.get('rule_index', 999) for r in valid_rules]
                 self.connectivity_cache["details"] = details_cache
 
-        # 关联度计算 (支持作者搜书与书名/作者维度搜书)
-        kw_lower = keyword.strip().lower()
-        for r in results:
-            b_name = r.get('bookName', '').lower()
-            author = r.get('author', '').lower()
-            
-            ratio_b = difflib.SequenceMatcher(None, kw_lower, b_name).ratio()
-            ratio_a = difflib.SequenceMatcher(None, kw_lower, author).ratio()
+        # 【100% 完全对齐 so-novel-main SearchResultsHandler.java 算法】
+        # 预计算书名与作者相似度，并自动判定关键字是书名还是作者
+        kw_str = keyword.strip()
+        book_sim_list = []
+        author_sim_list = []
+        sim_map = {}
 
-            if search_type == "author":
-                if kw_lower and author and (kw_lower in author or author in kw_lower):
-                    r['ratio'] = 0.9 + ratio_a * 0.1
-                else:
-                    r['ratio'] = ratio_a
-            elif search_type == "title":
-                if kw_lower and b_name and (kw_lower in b_name or b_name in kw_lower):
-                    r['ratio'] = 0.9 + ratio_b * 0.1
-                else:
-                    r['ratio'] = ratio_b
-            else: # smart
-                if kw_lower and author and (kw_lower in author or author in kw_lower):
-                    r['ratio'] = 0.85 + ratio_a * 0.15
-                elif kw_lower and b_name and (kw_lower in b_name or b_name in kw_lower):
-                    r['ratio'] = 0.8 + ratio_b * 0.2
-                else:
-                    r['ratio'] = max(ratio_b, ratio_a * 0.9)
+        import difflib
+        for r in results:
+            b_name = r.get('bookName', '') or ''
+            author = r.get('author', '') or ''
+            s_b = difflib.SequenceMatcher(None, kw_str, b_name).ratio()
+            s_a = difflib.SequenceMatcher(None, kw_str, author).ratio()
+            sim_map[id(r)] = (s_b, s_a)
+            book_sim_list.append(s_b)
+            author_sim_list.append(s_a)
+
+        def _weight(s: float, is_short: bool, is_long: bool) -> float:
+            if is_short:
+                if s == 1.0: return 12.0
+                if s >= 0.8: return (s ** 3) * 8.0
+                if s >= 0.7: return s * 5.0
+                return 0.0
+            if is_long:
+                if s == 1.0: return 10.0
+                if s >= 0.85: return (s ** 3) * 8.0
+                if s >= 0.7: return (s ** 2) * 5.0
+                if s >= 0.5: return s * 3.0
+                return s * 1.2
+            if s == 1.0: return 10.0
+            if s >= 0.85: return (s ** 3) * 8.0
+            if s >= 0.7: return (s ** 2) * 5.0
+            if s >= 0.5: return s * 3.0
+            return 0.0
+
+        def _compute_weight(sim_list: list) -> float:
+            is_short = len(kw_str) <= 4
+            is_long = len(kw_str) >= 10
+            return sum(_weight(s, is_short, is_long) for s in sim_list)
+
+        if search_type == "author":
+            is_author_search = True
+        elif search_type == "title":
+            is_author_search = False
+        else:
+            is_author_search = _compute_weight(book_sim_list) < _compute_weight(author_sim_list)
+
+        for r in results:
+            s_b, s_a = sim_map[id(r)]
+            r['ratio'] = s_a if is_author_search else s_b
             r['rule_index'] = r.get('rule', {}).get('rule_index', 999)
 
-        # 确定性多维稳定排序：相似度降序 > 规则位次升序 > 书名升序 > 书源升序
-        results.sort(key=lambda x: (-round(x.get('ratio', 0), 3), x.get('rule_index', 999), x.get('bookName', ''), x.get('sourceName', '')))
+        # 降序排序 + 低相似度 (<=0.25) 过滤
+        filtered = [r for r in results if r.get('ratio', 0.0) > 0.25]
+        if not filtered:
+            filtered = [r for r in results if r.get('ratio', 0.0) > 0.0]
+
+        target_list = filtered if filtered else results
+        target_list.sort(key=lambda x: (
+            -round(x.get('ratio', 0.0), 3),
+            x.get('bookName', '') if is_author_search else x.get('author', ''),
+            x.get('rule_index', 999)
+        ))
 
         # 稳定去重
         seen_keys = set()
         deduped = []
-        for r in results:
+        for r in target_list:
             k = (r.get('bookName', ''), r.get('author', ''), r.get('sourceName', ''))
             if k not in seen_keys:
                 seen_keys.add(k)
@@ -515,7 +548,6 @@ class SoNovelClient:
             unique_chapters.reverse()
 
         return unique_chapters
-        return chapters
 
     def download_chapter(self, chapter_url: str, rule: dict) -> str:
         chap_rule = rule.get("chapter", {})
