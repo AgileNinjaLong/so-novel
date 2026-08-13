@@ -161,6 +161,8 @@ class BaseStealthWindow(QWidget):
             new_win = FloatingView(self.config_mgr, bookshelf_window=self.bookshelf_window)
 
         if book_path and os.path.exists(book_path):
+            if self.bookshelf_window:
+                new_win.progress_updated_signal.connect(self.bookshelf_window.on_reading_progress_updated)
             new_win.load_file(book_path)
             if self.bookshelf_window and hasattr(self.bookshelf_window, 'active_reading_windows'):
                 self.bookshelf_window.active_reading_windows[book_path] = new_win

@@ -907,23 +907,30 @@ class BookshelfWindow(QMainWindow):
     def init_tab_settings(self):
         layout = QVBoxLayout(self.tab_settings)
 
-        group_mode = QGroupBox("模式与全局隐身按键")
-        form_mode = QFormLayout()
-        
+        group_mode = QGroupBox("摸鱼伪装模式与快捷键绑定 (全套 21 种伪装模式)")
+        mode_layout = QVBoxLayout(group_mode)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        scroll_widget = QWidget()
+        form_mode = QFormLayout(scroll_widget)
+        form_mode.setContentsMargins(10, 10, 10, 10)
+
         self.boss_key_edit = QKeySequenceEdit(self)
         self.boss_key_edit.setKeySequence(QKeySequence(self.config_manager.settings.get("boss_key", "Alt+Z")))
-        self.hk_floating_edit = QKeySequenceEdit(self)
-        self.hk_floating_edit.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_floating", "Ctrl+1")))
-        self.hk_ide_edit = QKeySequenceEdit(self)
-        self.hk_ide_edit.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_ide", "Ctrl+2")))
-        self.hk_cad_edit = QKeySequenceEdit(self)
-        self.hk_cad_edit.setKeySequence(QKeySequence(self.config_manager.settings.get("hk_cad", "Ctrl+3")))
-
         form_mode.addRow("🛡️ 老板键 (全局隐身):", self.boss_key_edit)
-        form_mode.addRow("📖 极简透明模式:", self.hk_floating_edit)
-        form_mode.addRow("💻 IDE 伪装模式:", self.hk_ide_edit)
-        form_mode.addRow("📐 CAD 伪装模式:", self.hk_cad_edit)
-        group_mode.setLayout(form_mode)
+
+        self.mode_shortcut_edits = {}
+        for m_key, m_name, m_setting, default_hk in ALL_STEALTH_MODES:
+            edit = QKeySequenceEdit(self)
+            edit.setKeySequence(QKeySequence(self.config_manager.settings.get(m_setting, default_hk)))
+            form_mode.addRow(f"{m_name}:", edit)
+            self.mode_shortcut_edits[m_setting] = edit
+
+        scroll_area.setWidget(scroll_widget)
+        mode_layout.addWidget(scroll_area)
         layout.addWidget(group_mode)
 
         group_read = QGroupBox("阅读控制与自动滚动")
