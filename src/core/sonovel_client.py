@@ -189,6 +189,25 @@ class SoNovelClient:
             tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
             items = self._select_elements(tree, search_rule.get("result", ""))
             
+            # 【100% 对齐 so-novel-main SearchParser.java】
+            # 部分书源搜索完全匹配时会直接重定向到详情页 (result 列表为空，但书名选择器能匹配到页面元素)
+            book_rule = rule.get("book", {})
+            book_name_sel = book_rule.get("bookName", "")
+            if not items and book_name_sel and self._select_elements(tree, book_name_sel):
+                book_name = self._extract_text(tree, book_name_sel)
+                author = self._extract_text(tree, book_rule.get("author", ""))
+                latest_chap = self._extract_text(tree, book_rule.get("latestChapter", ""))
+                if book_name:
+                    results.append({
+                        "bookName": book_name,
+                        "author": author,
+                        "latestChapter": latest_chap,
+                        "url": resp.url,
+                        "sourceName": rule.get("name"),
+                        "rule": rule
+                    })
+                    return results
+
             for item in items:
                 book_name = self._extract_text(item, search_rule.get("bookName"))
                 author = self._extract_text(item, search_rule.get("author"))
