@@ -1,11 +1,11 @@
 # Graph Report - .  (2026-08-13)
 
 ## Corpus Check
-- Corpus is ~49,270 words - fits in a single context window. You may not need a graph.
+- Corpus is ~49,280 words - fits in a single context window. You may not need a graph.
 
 ## Summary
-- 353 nodes · 708 edges · 18 communities (16 shown, 2 thin omitted)
-- Extraction: 88% EXTRACTED · 12% INFERRED · 0% AMBIGUOUS · INFERRED: 82 edges (avg confidence: 0.52)
+- 358 nodes · 722 edges · 17 communities (16 shown, 1 thin omitted)
+- Extraction: 88% EXTRACTED · 12% INFERRED · 0% AMBIGUOUS · INFERRED: 86 edges (avg confidence: 0.52)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -20,17 +20,16 @@
 - [[_COMMUNITY_Community 8|Community 8]]
 - [[_COMMUNITY_Community 9|Community 9]]
 - [[_COMMUNITY_Community 10|Community 10]]
-- [[_COMMUNITY_Community 11|Community 11]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `BookshelfWindow` - 62 edges
 2. `BaseStealthWindow` - 54 edges
-3. `ConfigManager` - 37 edges
-4. `SoNovelClient` - 33 edges
+3. `ConfigManager` - 40 edges
+4. `SoNovelClient` - 35 edges
 5. `DownloadDialog` - 25 edges
-6. `Book` - 23 edges
-7. `Chapter` - 22 edges
-8. `DatabaseManager` - 21 edges
+6. `DatabaseManager` - 24 edges
+7. `Book` - 23 edges
+8. `Chapter` - 22 edges
 9. `FloatingView` - 19 edges
 10. `DownloadWorker` - 17 edges
 
@@ -41,27 +40,27 @@
   tests/run_tests.py → src/core/config.py
 - `TestParser` --uses--> `ConfigManager`  [INFERRED]
   tests/run_tests.py → src/core/config.py
-- `DebugClient` --uses--> `SoNovelClient`  [INFERRED]
-  trace_freeze.py → src/core/sonovel_client.py
-- `DummyWorker` --uses--> `SoNovelClient`  [INFERRED]
-  trace_freeze.py → src/core/sonovel_client.py
+- `TestAutoUpdateVerification` --uses--> `ConfigManager`  [INFERRED]
+  tests/test_auto_update_flow.py → src/core/config.py
+- `TestAutoUpdateVerification` --uses--> `SoNovelClient`  [INFERRED]
+  tests/test_auto_update_flow.py → src/core/sonovel_client.py
 
 ## Import Cycles
 - None detected.
 
-## Communities (18 total, 2 thin omitted)
+## Communities (17 total, 1 thin omitted)
 
 ### Community 0 - "Community 0"
-Cohesion: 0.06
-Nodes (17): EpubBuilder, 原生生成标准的 EPUB 电子书 (Zip 容器，含 mimetype, container.xml, content.opf, toc.ncx, XHTML, _get_js_ctx(), 对单本书源规则的目标 host 发起快速连通性响应测试 (单次 3.0s 超时)，返回 (is_ok, latency_ms), 当搜书过程中发现原本通过测试的书源断连时，立即打回并标记缓存失效, SoNovelClient, Event, QObject (+9 more)
-
-### Community 1 - "Community 1"
-Cohesion: 0.06
+Cohesion: 0.07
 Nodes (10): QDropEvent, QMainWindow, QWidget, BookshelfWindow, 主窗口实时槽函数：精准同步更新章 + 行级别的实时阅读进度, 自动将外部导入的小说复制一份存放于项目根目录 downloads/ 文件夹中, 开启摸鱼阅读：主界面保持显示不隐藏，支持同时打开多本小说, 点击主界面关闭按钮 (X) 时：在没有在看的小说时直接彻底退出程序；在有摸鱼阅读时弹窗提示并提供彻底退出选项，彻底消除后台僵尸进程！ (+2 more)
 
-### Community 2 - "Community 2"
+### Community 1 - "Community 1"
 Cohesion: 0.09
 Nodes (8): QDragEnterEvent, QDragMoveEvent, QPoint, BaseStealthWindow, 实时响应快捷键，在当前获焦的摸鱼窗口中一键切换伪装模式, 子类可重写，返回该模式下基于当前窗口宽度的单行最大字数, 子类可重写，返回该模式下基于当前窗口高度的最大可见行数, 抽象方法，子类必须实现。用于将 self.book, self.lines 和进度更新到 UI
+
+### Community 2 - "Community 2"
+Cohesion: 0.08
+Nodes (9): DatabaseManager, SQLite 数据库管理器：持久化保存小说下载管理任务、书籍信息、作者、下载链接等核心元数据, TestAutoUpdateVerification, TestDatabaseManager, AutoUpdateWorker, DownloadWorker, get_resource_path(), 自动追更检索：软件开启默认执行一次，之后每 30 分钟轮询一次 (+1 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.11
@@ -73,41 +72,41 @@ Nodes (12): Any, ConfigManager, test_config_save_and_load(), test_last_file_hand
 
 ### Community 5 - "Community 5"
 Cohesion: 0.09
+Nodes (7): EpubBuilder, 原生生成标准的 EPUB 电子书 (Zip 容器，含 mimetype, container.xml, content.opf, toc.ncx, XHTML, QObject, DownloadDialog, DownloadWorker, 使用独享物理 Session 抓取章节纯文本, SearchWorker
+
+### Community 6 - "Community 6"
+Cohesion: 0.09
 Nodes (8): QKeyEvent, QMouseEvent, QTextEdit, QWheelEvent, CADCommandLineEdit, CADPseudoView, IDEPseudoView, LogTextEdit
 
 ### Community 7 - "Community 7"
-Cohesion: 0.15
-Nodes (4): QAbstractNativeEventFilter, NovelReadApp, BossKeyManager, WindowsNativeHotkeyFilter
+Cohesion: 0.10
+Nodes (9): _get_js_ctx(), 对单本书源规则的目标 host 发起快速连通性响应测试 (单次 3.0s 超时)，返回 (is_ok, latency_ms), 当搜书过程中发现原本通过测试的书源断连时，立即打回并标记缓存失效, SoNovelClient, Event, QThread, Session, DebugClient (+1 more)
 
 ### Community 8 - "Community 8"
-Cohesion: 0.19
-Nodes (3): DatabaseManager, SQLite 数据库管理器：持久化保存小说下载管理任务、书籍信息、作者、下载链接等核心元数据, TestDatabaseManager
+Cohesion: 0.15
+Nodes (4): QAbstractNativeEventFilter, NovelReadApp, BossKeyManager, WindowsNativeHotkeyFilter
 
 ### Community 9 - "Community 9"
 Cohesion: 0.15
 Nodes (4): QDialog, test_chapter_dialog(), ChapterDialog, SettingsDialog
 
-### Community 10 - "Community 10"
-Cohesion: 0.33
-Nodes (3): QThread, DebugClient, DummyWorker
-
 ## Knowledge Gaps
-- **2 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **1 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `BookshelfWindow` connect `Community 1` to `Community 0`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 7`, `Community 8`?**
-  _High betweenness centrality (0.319) - this node is a cross-community bridge._
-- **Why does `BaseStealthWindow` connect `Community 2` to `Community 1`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 9`?**
-  _High betweenness centrality (0.314) - this node is a cross-community bridge._
-- **Why does `SoNovelClient` connect `Community 0` to `Community 1`, `Community 10`, `Community 4`, `Community 6`?**
-  _High betweenness centrality (0.194) - this node is a cross-community bridge._
+- **Why does `BookshelfWindow` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 7`, `Community 8`?**
+  _High betweenness centrality (0.313) - this node is a cross-community bridge._
+- **Why does `BaseStealthWindow` connect `Community 1` to `Community 0`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 9`?**
+  _High betweenness centrality (0.309) - this node is a cross-community bridge._
+- **Why does `SoNovelClient` connect `Community 7` to `Community 0`, `Community 2`, `Community 4`, `Community 5`?**
+  _High betweenness centrality (0.197) - this node is a cross-community bridge._
 - **Are the 9 inferred relationships involving `BookshelfWindow` (e.g. with `NovelReadApp` and `ConfigManager`) actually correct?**
   _`BookshelfWindow` has 9 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 10 inferred relationships involving `BaseStealthWindow` (e.g. with `Book` and `NovelParser`) actually correct?**
   _`BaseStealthWindow` has 10 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 8 inferred relationships involving `ConfigManager` (e.g. with `NovelReadApp` and `TestConfig`) actually correct?**
-  _`ConfigManager` has 8 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 9 inferred relationships involving `SoNovelClient` (e.g. with `DebugClient` and `DummyWorker`) actually correct?**
-  _`SoNovelClient` has 9 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 9 inferred relationships involving `ConfigManager` (e.g. with `NovelReadApp` and `TestConfig`) actually correct?**
+  _`ConfigManager` has 9 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 10 inferred relationships involving `SoNovelClient` (e.g. with `TestAutoUpdateVerification` and `DebugClient`) actually correct?**
+  _`SoNovelClient` has 10 INFERRED edges - model-reasoned connections that need verification._

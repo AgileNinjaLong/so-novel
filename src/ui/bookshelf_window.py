@@ -509,31 +509,14 @@ class BookshelfWindow(QMainWindow):
             status_text = t.get("status_text", "✅ 已完成")
             progress_current = t.get("progress_current", 0)
             progress_total = t.get("progress_total", 0)
-            is_auto = t.get("is_auto_update", 0) == 1
             book_info = t.get("book_info", {})
 
             t_row = self.task_table.rowCount()
             self.task_table.insertRow(t_row)
 
-            title_item = QTableWidgetItem()
+            title_item = QTableWidgetItem(f"{book_title} ({author_name})")
             title_item.setData(Qt.ItemDataRole.UserRole, task_id)
             title_item.setData(Qt.ItemDataRole.UserRole + 1, t.get("url", ""))
-
-            def _apply_title_style(item, b_title, a_name, is_checked):
-                if is_checked:
-                    item.setText(f"[🔄 追更中] {b_title} ({a_name})")
-                    item.setForeground(QColor("#7C4DFF"))  # 专属高亮紫色
-                    font = item.font()
-                    font.setBold(True)
-                    item.setFont(font)
-                else:
-                    item.setText(f"{b_title} ({a_name})")
-                    item.setForeground(QColor("#FFFFFF"))
-                    font = item.font()
-                    font.setBold(False)
-                    item.setFont(font)
-
-            _apply_title_style(title_item, book_title, author_name, is_auto)
             self.task_table.setItem(t_row, 0, title_item)
             self.task_table.setItem(t_row, 1, QTableWidgetItem(export_mode.upper()))
 
@@ -556,22 +539,6 @@ class BookshelfWindow(QMainWindow):
             btn_layout = QHBoxLayout(btn_box)
             btn_layout.setContentsMargins(2, 2, 2, 2)
             btn_layout.setSpacing(6)
-
-            chk_auto = QCheckBox("🔄 追更")
-            chk_auto.setToolTip("勾选后将开启后台独立线程每 30 分钟自动检查并增量更新最新章节")
-            chk_auto.setStyleSheet("color: #64B5F6; font-size: 11px; font-weight: bold;")
-            chk_auto.setChecked(is_auto)
-
-            def _make_toggled(tid, item, b_title, a_name):
-                def _on_toggled(checked):
-                    val = 1 if checked else 0
-                    self.db_manager.set_auto_update(tid, val)
-                    if tid in self.download_tasks:
-                        self.download_tasks[tid]["is_auto_update"] = val
-                    _apply_title_style(item, b_title, a_name, checked)
-                return _on_toggled
-
-            chk_auto.toggled.connect(_make_toggled(task_id, title_item, book_title, author_name))
 
             action_btn = QPushButton()
             action_btn.setFixedWidth(70)
@@ -604,7 +571,6 @@ class BookshelfWindow(QMainWindow):
             del_btn.setStyleSheet("background-color: #555555; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
             del_btn.clicked.connect(lambda _, tid=task_id: self.remove_download_task(tid))
 
-            btn_layout.addWidget(chk_auto)
             btn_layout.addWidget(action_btn)
             btn_layout.addWidget(del_btn)
             self.task_table.setCellWidget(t_row, 4, btn_box)
@@ -614,7 +580,7 @@ class BookshelfWindow(QMainWindow):
                 "title": book_title, "author": author_name, "mode": export_mode,
                 "url": t.get("url", ""), "source_name": t.get("source_name", "未知"),
                 "pbar": pbar, "st_item": st_item, "btn": action_btn, "del_btn": del_btn,
-                "book_info": book_info, "is_auto_update": 1 if is_auto else 0
+                "book_info": book_info
             }
 
         self.tabs.setTabText(2, f"📥 下载管理 ({len(self.download_tasks)})")
@@ -1402,34 +1368,6 @@ class BookshelfWindow(QMainWindow):
         btn_layout.setContentsMargins(2, 2, 2, 2)
         btn_layout.setSpacing(6)
 
-        chk_auto = QCheckBox("🔄 追更")
-        chk_auto.setToolTip("勾选后将开启后台独立线程每 30 分钟自动检查并增量更新最新章节")
-        chk_auto.setStyleSheet("color: #64B5F6; font-size: 11px; font-weight: bold;")
-        chk_auto.setChecked(False)
-
-        def _apply_new_title_style(item, b_title, a_name, is_checked):
-            if is_checked:
-                item.setText(f"[🔄 追更中] {b_title} ({a_name})")
-                item.setForeground(QColor("#7C4DFF"))  # 专属高亮紫色
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
-            else:
-                item.setText(f"{b_title} ({a_name})")
-                item.setForeground(QColor("#FFFFFF"))
-                font = item.font()
-                font.setBold(False)
-                item.setFont(font)
-
-        def _on_new_auto_toggled(checked):
-            val = 1 if checked else 0
-            self.db_manager.set_auto_update(task_id, val)
-            if task_id in self.download_tasks:
-                self.download_tasks[task_id]["is_auto_update"] = val
-            _apply_new_title_style(title_item, book_title, author_name, checked)
-
-        chk_auto.toggled.connect(_on_new_auto_toggled)
-
         cancel_btn = QPushButton("❌ 取消")
         cancel_btn.setFixedWidth(70)
         cancel_btn.setFixedHeight(26)
@@ -1442,7 +1380,6 @@ class BookshelfWindow(QMainWindow):
         del_btn.setStyleSheet("background-color: #555555; color: white; border-radius: 3px; font-size: 11px; font-weight: bold;")
         del_btn.clicked.connect(lambda _, tid=task_id: self.remove_download_task(tid))
 
-        btn_layout.addWidget(chk_auto)
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(del_btn)
         self.task_table.setCellWidget(t_row, 4, btn_box)
