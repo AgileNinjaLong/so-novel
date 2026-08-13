@@ -1,10 +1,10 @@
 # Graph Report - .  (2026-08-13)
 
 ## Corpus Check
-- Corpus is ~49,080 words - fits in a single context window. You may not need a graph.
+- Corpus is ~49,050 words - fits in a single context window. You may not need a graph.
 
 ## Summary
-- 353 nodes · 709 edges · 18 communities (16 shown, 2 thin omitted)
+- 353 nodes · 708 edges · 18 communities (16 shown, 2 thin omitted)
 - Extraction: 88% EXTRACTED · 12% INFERRED · 0% AMBIGUOUS · INFERRED: 82 edges (avg confidence: 0.52)
 - Token cost: 0 input · 0 output
 
@@ -98,7 +98,7 @@ Nodes (3): QThread, DebugClient, DummyWorker
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `BookshelfWindow` connect `Community 1` to `Community 0`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 7`, `Community 8`?**
-  _High betweenness centrality (0.318) - this node is a cross-community bridge._
+  _High betweenness centrality (0.319) - this node is a cross-community bridge._
 - **Why does `BaseStealthWindow` connect `Community 2` to `Community 1`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 9`?**
   _High betweenness centrality (0.314) - this node is a cross-community bridge._
 - **Why does `SoNovelClient` connect `Community 0` to `Community 1`, `Community 10`, `Community 4`, `Community 6`?**
