@@ -134,9 +134,20 @@ class DownloadWorker(QObject):
             book_name = self.book_info.get("bookName", "未知书名")
             author = self.book_info.get("author", "未知作者")
             
-            # 读取 SoNovel 规则中的 crawl 反爬/限流配置
+            # 【100% 完全对齐 so-novel-main Crawler.java 线程数与并发逻辑】
             rule_crawl = rule.get("crawl", {}) if isinstance(rule, dict) else {}
-            concurrency = int(rule_crawl.get("concurrency", 20))
+            rule_concurrency = rule_crawl.get("concurrency")
+            
+            if rule_concurrency is not None:
+                base_concurrency = int(rule_concurrency)
+            else:
+                base_concurrency = 50
+
+            if base_concurrency > 100:
+                base_concurrency = 100
+            elif base_concurrency < 1:
+                base_concurrency = 1
+
             min_interval = float(rule_crawl.get("minInterval", 200)) / 1000.0
             max_interval = float(rule_crawl.get("maxInterval", 400)) / 1000.0
 
@@ -151,7 +162,9 @@ class DownloadWorker(QObject):
                 return
 
             total = len(toc)
-            self.progress_signal.emit(self.task_id, 0, total, f"找到 {total} 章，准备下载 (线程数: {concurrency})...")
+            concurrency = min(base_concurrency, total) if total > 0 else base_concurrency
+
+            self.progress_signal.emit(self.task_id, 0, total, f"找到 {total} 章，准备下载 (并发线程数: {concurrency})...")
             os.makedirs(os.path.dirname(os.path.abspath(self.save_path)), exist_ok=True)
 
             import concurrent.futures
