@@ -254,8 +254,10 @@ class DownloadWorker(QObject):
 
     def download_chapter_isolated(self, chapter_url: str, rule: dict, min_interval: float = 0.2, max_interval: float = 0.4, chap_title: str = "") -> str:
         from lxml import html
+        import urllib.parse
         import random
         chap_rule = rule.get("chapter", {})
+        ignore_ssl = rule.get("ignoreSsl", False)
         content_parts = []
         current_url = chapter_url
         visited = set()
@@ -265,11 +267,16 @@ class DownloadWorker(QObject):
                 break
             visited.add(current_url)
             resp = None
+            parsed = urllib.parse.urlparse(current_url)
+            req_headers = dict(self.session.headers)
+            req_headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+            req_headers["Host"] = parsed.netloc
+
             for attempt in range(3):
                 if self.cancel_event.is_set():
                     break
                 try:
-                    resp = self.session.get(current_url, timeout=(4.0, 8.0))
+                    resp = self.session.get(current_url, headers=req_headers, timeout=(4.0, 8.0), verify=not ignore_ssl)
                     if resp.status_code == 200:
                         break
                 except Exception:

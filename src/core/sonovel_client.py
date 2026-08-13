@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import re
+import time
 import urllib.parse
 from typing import List, Dict, Any, Optional
 import requests
@@ -551,6 +552,7 @@ class SoNovelClient:
 
     def download_chapter(self, chapter_url: str, rule: dict) -> str:
         chap_rule = rule.get("chapter", {})
+        ignore_ssl = rule.get("ignoreSsl", False)
         content_parts = []
         current_url = chapter_url
         visited = set()
@@ -558,20 +560,23 @@ class SoNovelClient:
         while current_url and current_url not in visited:
             visited.add(current_url)
             resp = None
+            parsed = urllib.parse.urlparse(current_url)
+            req_headers = dict(self.headers)
+            req_headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+            req_headers["Host"] = parsed.netloc
+
             # 自动重试机制（最多重试3次）
             for attempt in range(3):
                 try:
-                    resp = self.session.get(current_url, timeout=12)
+                    resp = self.session.get(current_url, headers=req_headers, timeout=12, verify=not ignore_ssl)
                     if resp.status_code == 200:
                         break
                 except Exception:
                     if attempt < 2:
-                        import time
                         time.sleep(0.5 * (attempt + 1))
                     else:
-                        # 尝试直连旁路重试（绕过本地可能拥堵的 127.0.0.1 代理）
                         try:
-                            resp = requests.get(current_url, headers=self.headers, timeout=12, proxies={"http": None, "https": None})
+                            resp = requests.get(current_url, headers=req_headers, timeout=12, verify=not ignore_ssl, proxies={"http": None, "https": None})
                         except Exception:
                             pass
 
@@ -581,9 +586,6 @@ class SoNovelClient:
             try:
                 if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                     resp.encoding = resp.apparent_encoding
-                
-                # 若需要对整个响应体使用 @js 处理 (少见但可能)
-                raw_html = resp.text
 
                 tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
                 
@@ -603,9 +605,6 @@ class SoNovelClient:
                     break
                     
                 node = content_nodes[0]
-                
-                # 处理内容：SoNovel 支持将 <br> 和段落标签转为 \n
-                # lxml 会保留所有文字
                 if js_code:
                     raw_inner_html = html.tostring(node, encoding='unicode', method='html')
                     processed_html = self._apply_js(raw_inner_html, js_code)
@@ -619,6 +618,9 @@ class SoNovelClient:
                     
                 text = node.text_content()
                 
+                # 【对齐 so-novel-main CrawlUtils.java】清理控制符与私有区不可见字符
+                text = re.sub(r'[\x00-\x1f\x7f-\x9f\u200b-\u200f\ufeff]', '', text)
+
                 # 过滤正则文本
                 filter_txt = chap_rule.get("filterTxt", "")
                 if filter_txt:
