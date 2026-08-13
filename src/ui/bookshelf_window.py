@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QFileDialog, QMessageBox, QTabWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QLineEdit, QComboBox, QProgressBar,
-    QSystemTrayIcon, QMenu, QGroupBox, QFormLayout, QKeySequenceEdit, QDoubleSpinBox, QApplication, QStyle, QCheckBox
+    QSystemTrayIcon, QMenu, QGroupBox, QFormLayout, QKeySequenceEdit, QDoubleSpinBox, QApplication, QStyle, QCheckBox, QScrollArea
 )
 from PyQt6.QtGui import QColor, QFont, QIcon, QDragEnterEvent, QDropEvent, QKeySequence
 
@@ -20,6 +20,7 @@ from src.core.db_manager import DatabaseManager
 from src.core.sonovel_client import SoNovelClient
 from src.core.parser import NovelParser
 from src.core.version import __version__, FULL_VERSION_STRING, RELEASE_DATE
+from src.ui.base_window import ALL_STEALTH_MODES
 
 if getattr(sys, 'frozen', False):
     ROOT_DIR = os.path.dirname(os.path.abspath(sys.executable))
@@ -1527,21 +1528,11 @@ class BookshelfWindow(QMainWindow):
     # ====== 系统设置页 =====
     def save_settings_tab(self):
         boss_key = self.boss_key_edit.keySequence().toString()
-        hk_floating = self.hk_floating_edit.keySequence().toString()
-        hk_ide = self.hk_ide_edit.keySequence().toString()
-        hk_cad = self.hk_cad_edit.keySequence().toString()
-        
-        keys = [boss_key, hk_floating, hk_ide, hk_cad]
-        valid_keys = [k for k in keys if k]
-        if len(valid_keys) != len(set(valid_keys)):
-            QMessageBox.critical(self, "防冲突警示", "检测到存在重复绑定的模式/老板键快捷键，请修改！")
-            return
-
         self.config_manager.settings["boss_key"] = boss_key
-        self.config_manager.settings["hk_floating"] = hk_floating
-        self.config_manager.settings["hk_ide"] = hk_ide
-        self.config_manager.settings["hk_cad"] = hk_cad
         
+        for m_setting, edit in getattr(self, 'mode_shortcut_edits', {}).items():
+            self.config_manager.settings[m_setting] = edit.keySequence().toString()
+
         self.config_manager.settings["hk_next_line"] = self.hk_next_line.keySequence().toString()
         self.config_manager.settings["hk_prev_line"] = self.hk_prev_line.keySequence().toString()
         self.config_manager.settings["hk_next_chap"] = self.hk_next_chap.keySequence().toString()

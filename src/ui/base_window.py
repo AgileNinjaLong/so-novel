@@ -10,6 +10,32 @@ from src.ui.chapter_dialog import ChapterDialog
 from src.ui.settings_dialog import SettingsDialog
 from src.ui.download_dialog import DownloadDialog
 
+ALL_STEALTH_MODES = [
+    ("floating", "📖 极简透明悬浮窗模式", "hk_floating", "Ctrl+1"),
+    ("ide_pseudo", "💻 VS Code 代码编辑器模式", "hk_ide", "Ctrl+2"),
+    ("cad_pseudo", "📐 CAD 建筑图纸命令行模式", "hk_cad", "Ctrl+3"),
+    ("excel_sheet", "📊 Excel 电子表格模式", "hk_excel", ""),
+    ("word_doc", "📄 Word 办公文档草稿模式", "hk_word", ""),
+    ("terminal_cli", "🖥️ PowerShell 终端日志模式", "hk_terminal", ""),
+    ("outlook_email", "✉️ Outlook 工作邮件客户端模式", "hk_outlook", ""),
+    ("swagger_api", "🔌 Swagger API 接口文档模式", "hk_swagger", ""),
+    ("git_diff", "🔀 Git Commit Diff 版本控制模式", "hk_git", ""),
+    ("notion_markdown", "📓 Notion / Markdown 工作笔记模式", "hk_notion", ""),
+    ("pdf_reader", "📑 PDF 学术论文阅读器模式", "hk_pdf", ""),
+    ("stock_kline", "📈 股票 K 线行情看板模式", "hk_stock", ""),
+    ("json_validator", "🔍 JSON 格式化报文校验模式", "hk_json", ""),
+    ("sys_monitor", "📊 任务管理器性能监控模式", "hk_sysmon", ""),
+    ("calculator_gui", "🧮 财务科学计算器模式", "hk_calc", ""),
+    ("database_dbeaver", "🗄️ SQL 数据库控制台结果集", "hk_db", ""),
+    ("jupyter_notebook", "🪐 Jupyter Data Science Notebook", "hk_jupyter", ""),
+    ("deepl_translate", "🌐 DeepL 双语对照翻译模式", "hk_deepl", ""),
+    ("browser_devtools", "🛠️ Chrome DevTools F12 控制台", "hk_devtools", ""),
+    ("chat_teams", "💬 企业工作群聊日志模式", "hk_teams", ""),
+    ("logcat_viewer", "📜 服务器运行日志流模式", "hk_logcat", ""),
+    ("markdown_editor", "📝 Typora Markdown 编辑器模式", "hk_typora", ""),
+    ("jenkins_ci", "⚙️ Jenkins CI 自动化构建日志模式", "hk_jenkins", "")
+]
+
 class BaseStealthWindow(QWidget):
     switch_mode_signal = pyqtSignal()
     file_loaded_signal = pyqtSignal(str)
@@ -51,28 +77,14 @@ class BaseStealthWindow(QWidget):
             sc.deleteLater()
         self.reading_shortcuts.clear()
 
-        # 模式切换快捷键 (Ctrl+1: 极简透明, Ctrl+2: IDE伪装, Ctrl+3: CAD伪装)
-        hk_floating = self.config_mgr.settings.get("hk_floating", "Ctrl+1")
-        hk_ide = self.config_mgr.settings.get("hk_ide", "Ctrl+2")
-        hk_cad = self.config_mgr.settings.get("hk_cad", "Ctrl+3")
-
-        if hk_floating:
-            sc1 = QShortcut(QKeySequence(hk_floating), self)
-            sc1.setContext(Qt.ShortcutContext.ApplicationShortcut)
-            sc1.activated.connect(lambda: self.switch_to_mode("floating"))
-            self.reading_shortcuts.append(sc1)
-
-        if hk_ide:
-            sc2 = QShortcut(QKeySequence(hk_ide), self)
-            sc2.setContext(Qt.ShortcutContext.ApplicationShortcut)
-            sc2.activated.connect(lambda: self.switch_to_mode("ide_pseudo"))
-            self.reading_shortcuts.append(sc2)
-
-        if hk_cad:
-            sc3 = QShortcut(QKeySequence(hk_cad), self)
-            sc3.setContext(Qt.ShortcutContext.ApplicationShortcut)
-            sc3.activated.connect(lambda: self.switch_to_mode("cad_pseudo"))
-            self.reading_shortcuts.append(sc3)
+        # 动态读取 21 种摸鱼伪装模式的快捷键配置（新增模式初始化不设定快捷键，由人工自定义绑定）
+        for m_key, m_name, m_setting, default_hk in ALL_STEALTH_MODES:
+            hk_val = self.config_mgr.settings.get(m_setting, default_hk)
+            if hk_val:
+                sc = QShortcut(QKeySequence(hk_val), self)
+                sc.setContext(Qt.ShortcutContext.ApplicationShortcut)
+                sc.activated.connect(lambda k=m_key: self.switch_to_mode(k))
+                self.reading_shortcuts.append(sc)
 
         # 读取自定义阅读控制快捷键
         hk_next_line = self.config_mgr.settings.get("hk_next_line", "Down")
@@ -122,7 +134,7 @@ class BaseStealthWindow(QWidget):
         self.reading_shortcuts.append(sc_esc)
 
     def switch_to_mode(self, new_mode: str):
-        """实时响应快捷键，在当前获焦的摸鱼窗口中一键切换伪装模式"""
+        """实时响应快捷键或右键菜单，在当前获焦的摸鱼窗口中一键无缝切换 21 种伪装模式"""
         if not self.config_mgr:
             return
         curr_mode = self.config_mgr.settings.get("mode", "floating")
@@ -134,7 +146,11 @@ class BaseStealthWindow(QWidget):
 
         book_path = self.book.file_path if self.book else None
 
-        if new_mode == "ide_pseudo":
+        from src.ui.stealth_views import STEALTH_VIEW_MAP
+        if new_mode in STEALTH_VIEW_MAP:
+            view_cls = STEALTH_VIEW_MAP[new_mode]
+            new_win = view_cls(self.config_mgr, bookshelf_window=self.bookshelf_window)
+        elif new_mode == "ide_pseudo":
             from src.ui.ide_pseudo_view import IDEPseudoView
             new_win = IDEPseudoView(self.config_mgr, bookshelf_window=self.bookshelf_window)
         elif new_mode == "cad_pseudo":
@@ -555,6 +571,35 @@ class BaseStealthWindow(QWidget):
         bookshelf_action = menu.addAction("📚 返回主书架")
         exit_reading_action = menu.addAction("🚪 退出当前摸鱼模式")
         
+        menu.addSeparator()
+
+        # 🎨 切换摸鱼伪装模式 (子菜单展示全套 21 种摸鱼伪装模式)
+        mode_menu = menu.addMenu("🎨 切换摸鱼伪装模式")
+        mode_menu.setStyleSheet("""
+            QMenu {
+                background-color: #18181C;
+                color: #FFFFFF;
+                border: 1px solid #2D2D3A;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                border-radius: 3px;
+            }
+            QMenu::item:selected {
+                background-color: #0D47A1;
+                color: #FFFFFF;
+            }
+        """)
+
+        mode_actions = {}
+        for m_key, m_name, m_setting, default_hk in ALL_STEALTH_MODES:
+            hk_val = self.config_mgr.settings.get(m_setting, default_hk)
+            label = f"{m_name} ({hk_val})" if hk_val else m_name
+            act = mode_menu.addAction(label)
+            mode_actions[act] = m_key
+
         chap_action = None
         if self.book and self.book.chapters:
             menu.addSeparator()
@@ -571,7 +616,9 @@ class BaseStealthWindow(QWidget):
         boss_info.setEnabled(False)
 
         action = menu.exec(event.globalPos())
-        if action == bookshelf_action:
+        if action in mode_actions:
+            self.switch_to_mode(mode_actions[action])
+        elif action == bookshelf_action:
             self.stop_auto_scroll()
             if self.bookshelf_window:
                 self.bookshelf_window.refresh_bookshelf()
