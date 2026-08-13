@@ -1003,7 +1003,11 @@ class BookshelfWindow(QMainWindow):
             
             hist = self.config_manager.history.get(path, {})
             c_idx = hist.get("chapter_idx", 0)
-            prog_str = f"第 {c_idx + 1} 章" if c_idx > 0 else "未开始"
+            l_idx = hist.get("line_idx", 0)
+            if c_idx > 0 or l_idx > 0:
+                prog_str = f"第 {c_idx + 1} 章 (第 {l_idx + 1} 行)"
+            else:
+                prog_str = "未开始"
             prog_item = QTableWidgetItem(prog_str)
             prog_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.shelf_table.setItem(row, 4, prog_item)
@@ -1024,6 +1028,21 @@ class BookshelfWindow(QMainWindow):
             btn_layout.addWidget(read_btn)
             btn_layout.addWidget(remove_btn)
             self.shelf_table.setCellWidget(row, 5, btn_box)
+
+    def on_reading_progress_updated(self, file_path: str, chapter_idx: int, line_idx: int, total_lines: int):
+        """主窗口实时槽函数：精准同步更新章 + 行级别的实时阅读进度"""
+        for r in range(self.shelf_table.rowCount()):
+            item = self.shelf_table.item(r, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == file_path:
+                prog_item = self.shelf_table.item(r, 4)
+                if prog_item:
+                    chap_num = chapter_idx + 1
+                    line_num = line_idx + 1
+                    prog_str = f"第 {chap_num} 章 (第 {line_num} 行)"
+                    prog_item.setText(prog_str)
+                    prog_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    prog_item.setForeground(QColor("#64B5F6"))
+                break
 
     def on_shelf_item_double_clicked(self, item):
         row = item.row()
@@ -1091,6 +1110,9 @@ class BookshelfWindow(QMainWindow):
         else:
             from src.ui.floating_view import FloatingView
             win = FloatingView(self.config_manager, bookshelf_window=self)
+
+        # 连接实时进度信号槽
+        win.progress_updated_signal.connect(self.on_reading_progress_updated)
 
         # 触发加载并渲染小说文本
         win.load_file(file_path)

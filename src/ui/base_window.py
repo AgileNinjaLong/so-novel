@@ -14,6 +14,7 @@ class BaseStealthWindow(QWidget):
     switch_mode_signal = pyqtSignal()
     file_loaded_signal = pyqtSignal(str)
     settings_changed_signal = pyqtSignal()
+    progress_updated_signal = pyqtSignal(str, int, int, int)  # (file_path, chapter_idx, line_idx, total_lines)
 
     def __init__(self, config_manager, parent=None, bookshelf_window=None):
         super().__init__(parent)
@@ -216,9 +217,34 @@ class BaseStealthWindow(QWidget):
                     else:
                         self.recalculate_lines(self.book.get_current_chapter())
                         self.book.current_line_idx = 0
-            self.update_content()
+            self.save_and_emit_progress()
         else:
             self.render_view()
+
+    def save_and_emit_progress(self):
+        if not self.book or not self.book.file_path:
+            return
+        
+        total_l = len(self.lines) if self.lines else 1
+        if self.book.current_line_idx < 0:
+            self.book.current_line_idx = 0
+        elif self.book.current_line_idx >= total_l:
+            self.book.current_line_idx = max(0, total_l - 1)
+
+        # 1. 实时精准落盘保存行级别记忆进度
+        self.config_mgr.save_progress(
+            self.book.file_path,
+            self.book.current_chapter_idx,
+            self.book.current_line_idx
+        )
+
+        # 2. 实时发射 PyQt 信号给 BookshelfWindow 槽函数同步更新主界面
+        self.progress_updated_signal.emit(
+            self.book.file_path,
+            self.book.current_chapter_idx,
+            self.book.current_line_idx,
+            total_l
+        )
 
     def _jump_next_chap(self):
         if self.book and self.book.next_chapter():
@@ -385,9 +411,18 @@ class BaseStealthWindow(QWidget):
                 line_idx = 0
 
             self.book.current_chapter_idx = chap_idx
-            self.book.current_line_idx = line_idx
+            chap = self.book.get_current_chapter()
+            if chap:
+                self.recalculate_lines(chap)
+                if 0 <= line_idx < len(self.lines):
+                    self.book.current_line_idx = line_idx
+                else:
+                    self.book.current_line_idx = 0
+            else:
+                self.book.current_line_idx = 0
 
-            self.update_content()
+            self.render_view()
+            self.save_and_emit_progress()
             if notify:
                 self.file_loaded_signal.emit(file_path)
         except Exception as e:
@@ -406,11 +441,7 @@ class BaseStealthWindow(QWidget):
             self.book.current_line_idx = 0
 
         self.render_view()
-        self.config_mgr.save_progress(
-            self.book.file_path,
-            self.book.current_chapter_idx,
-            self.book.current_line_idx
-        )
+        self.save_and_emit_progress()
 
     def jump_to_chapter(self, idx: int):
         if self.book and 0 <= idx < len(self.book.chapters):
