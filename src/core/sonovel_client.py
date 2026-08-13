@@ -123,7 +123,7 @@ class SoNovelClient:
             return []
 
     def _extract_text(self, tree, rule_str: str, base_url: str = "") -> str:
-        if not tree or not rule_str:
+        if tree is None or not rule_str:
             return ""
 
         js_code = ""
@@ -249,7 +249,7 @@ class SoNovelClient:
         except Exception:
             return False, 0
 
-    def search(self, keyword: str, callback=None, status_callback=None, cancel_event=None, rule_tested_callback=None) -> List[Dict[str, Any]]:
+    def search(self, keyword: str, search_type: str = "smart", callback=None, status_callback=None, cancel_event=None, rule_tested_callback=None) -> List[Dict[str, Any]]:
         import concurrent.futures
         import difflib
         import time
@@ -346,8 +346,6 @@ class SoNovelClient:
                         res = f.result()
                         if res:
                             for r in res:
-                                r['ratio'] = difflib.SequenceMatcher(None, keyword, r.get('bookName', '')).ratio()
-                                r['rule_index'] = r.get('rule', {}).get('rule_index', 999)
                                 if callback and not (cancel_event and cancel_event.is_set()):
                                     callback(r)
                             results.extend(res)
@@ -367,8 +365,36 @@ class SoNovelClient:
                 self.connectivity_cache["valid_rule_indices"] = [r.get('rule_index', 999) for r in valid_rules]
                 self.connectivity_cache["details"] = details_cache
 
+        # 关联度计算 (支持作者搜书与书名/作者维度搜书)
+        kw_lower = keyword.strip().lower()
+        for r in results:
+            b_name = r.get('bookName', '').lower()
+            author = r.get('author', '').lower()
+            
+            ratio_b = difflib.SequenceMatcher(None, kw_lower, b_name).ratio()
+            ratio_a = difflib.SequenceMatcher(None, kw_lower, author).ratio()
+
+            if search_type == "author":
+                if kw_lower and author and (kw_lower in author or author in kw_lower):
+                    r['ratio'] = 0.9 + ratio_a * 0.1
+                else:
+                    r['ratio'] = ratio_a
+            elif search_type == "title":
+                if kw_lower and b_name and (kw_lower in b_name or b_name in kw_lower):
+                    r['ratio'] = 0.9 + ratio_b * 0.1
+                else:
+                    r['ratio'] = ratio_b
+            else: # smart
+                if kw_lower and author and (kw_lower in author or author in kw_lower):
+                    r['ratio'] = 0.85 + ratio_a * 0.15
+                elif kw_lower and b_name and (kw_lower in b_name or b_name in kw_lower):
+                    r['ratio'] = 0.8 + ratio_b * 0.2
+                else:
+                    r['ratio'] = max(ratio_b, ratio_a * 0.9)
+            r['rule_index'] = r.get('rule', {}).get('rule_index', 999)
+
         # 确定性多维稳定排序：相似度降序 > 规则位次升序 > 书名升序 > 书源升序
-        results.sort(key=lambda x: (-round(x['ratio'], 3), x.get('rule_index', 999), x.get('bookName', ''), x.get('sourceName', '')))
+        results.sort(key=lambda x: (-round(x.get('ratio', 0), 3), x.get('rule_index', 999), x.get('bookName', ''), x.get('sourceName', '')))
 
         # 稳定去重
         seen_keys = set()
@@ -444,20 +470,32 @@ class SoNovelClient:
                             full_link = urllib.parse.urljoin(base_uri, link)
                             chapters.append({"title": title, "url": full_link})
                 
-                # 翻页
+                # 目录翻页 (补全相对路径 urljoin 拼接，防止跨页书源遗漏后半段章节)
                 next_page_rule = toc_rule.get("nextPage", "")
                 if next_page_rule:
                     next_url = self._extract_text(tree, next_page_rule, resp.url)
+                    if next_url and not next_url.startswith("http"):
+                        next_url = urllib.parse.urljoin(resp.url, next_url)
                     if next_url and next_url != current_url and next_url.startswith("http"):
                         current_url = next_url
                         continue
                 break
-            except Exception as e:
+            except Exception:
                 break
                 
+        # 章节全量去重与倒序排列矫正 (防止因最新章节区块重复包含导致跳章/缺失)
+        seen_urls = set()
+        unique_chapters = []
+        for chap in chapters:
+            u = chap.get("url", "")
+            if u and u not in seen_urls:
+                seen_urls.add(u)
+                unique_chapters.append(chap)
+
         if toc_rule.get("isDesc", False):
-            chapters.reverse()
-            
+            unique_chapters.reverse()
+
+        return unique_chapters
         return chapters
 
     def download_chapter(self, chapter_url: str, rule: dict) -> str:

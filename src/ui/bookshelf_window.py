@@ -48,10 +48,11 @@ class SearchWorker(QObject):
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, client: SoNovelClient, keyword: str):
+    def __init__(self, client: SoNovelClient, keyword: str, search_type: str = "smart"):
         super().__init__()
         self.client = client
         self.keyword = keyword
+        self.search_type = search_type
         self.cancel_event = threading.Event()
 
     def start(self):
@@ -80,7 +81,8 @@ class SearchWorker(QObject):
                 except RuntimeError: pass
             
             res = self.client.search(
-                self.keyword, 
+                self.keyword,
+                search_type=self.search_type,
                 callback=on_item, 
                 status_callback=on_status, 
                 cancel_event=self.cancel_event,
@@ -847,11 +849,18 @@ class BookshelfWindow(QMainWindow):
         self.search_input.setPlaceholderText("输入小说名或作者发起 24 书源高并发搜索...")
         self.search_input.returnPressed.connect(self.do_search)
         
+        self.search_type_combo = QComboBox()
+        self.search_type_combo.addItem("🔍 智能匹配 (书名/作者)", "smart")
+        self.search_type_combo.addItem("📖 按书名搜索", "title")
+        self.search_type_combo.addItem("👤 按作者搜索", "author")
+        self.search_type_combo.setStyleSheet("min-width: 140px;")
+
         self.search_btn = QPushButton("搜索")
         self.search_btn.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; padding: 6px 14px; border-radius: 4px;")
         self.search_btn.clicked.connect(self.do_search)
 
         h.addWidget(self.search_input)
+        h.addWidget(self.search_type_combo)
         h.addWidget(self.search_btn)
         layout.addLayout(h)
 
@@ -1275,7 +1284,8 @@ class BookshelfWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         QApplication.processEvents()
         
-        self.search_worker = SearchWorker(self.client, keyword)
+        search_type = self.search_type_combo.currentData() or "smart"
+        self.search_worker = SearchWorker(self.client, keyword, search_type=search_type)
         self.search_worker.rule_tested_signal.connect(self.on_rule_tested)
         self.search_worker.item_found_signal.connect(self.on_search_item_found)
         self.search_worker.status_signal.connect(self.on_search_status)
