@@ -1,42 +1,49 @@
-import importlib
+from src.ui.floating_view import FloatingView
+from src.ui.ide_pseudo_view import IDEPseudoView
+from src.ui.cad_pseudo_view import CADPseudoView
+from src.ui.stealth_views.excel_view import ExcelPseudoView
+from src.ui.stealth_views.word_view import WordPseudoView
+from src.ui.stealth_views.terminal_view import TerminalPseudoView
+from src.ui.stealth_views.outlook_view import OutlookPseudoView
+from src.ui.stealth_views.swagger_view import SwaggerPseudoView
+from src.ui.stealth_views.git_diff_view import GitDiffPseudoView
+from src.ui.stealth_views.notion_view import NotionPseudoView
+from src.ui.stealth_views.pdf_view import PDFReaderPseudoView
+from src.ui.stealth_views.stock_view import StockKlinePseudoView
+from src.ui.stealth_views.json_view import JSONValidatorPseudoView
+from src.ui.stealth_views.sysmon_view import SysMonitorPseudoView
+from src.ui.stealth_views.calc_view import CalculatorPseudoView
+from src.ui.stealth_views.dbeaver_view import DBDBeaverPseudoView
+from src.ui.stealth_views.jupyter_view import JupyterPseudoView
+from src.ui.stealth_views.deepl_view import DeepLTranslatePseudoView
+from src.ui.stealth_views.devtools_view import DevToolsPseudoView
+from src.ui.stealth_views.teams_view import ChatTeamsPseudoView
+from src.ui.stealth_views.logcat_view import LogcatPseudoView
+from src.ui.stealth_views.markdown_view import MarkdownEditorPseudoView
+from src.ui.stealth_views.jenkins_view import JenkinsCIPseudoView
 
-# 模版视图模块映射名
-_VIEW_MODULE_MAP = {
-    "excel_sheet": ("excel_view", "ExcelPseudoView"),
-    "word_doc": ("word_view", "WordPseudoView"),
-    "terminal_cli": ("terminal_view", "TerminalPseudoView"),
-    "outlook_email": ("outlook_view", "OutlookPseudoView"),
-    "swagger_api": ("swagger_view", "SwaggerPseudoView"),
-    "git_diff": ("git_diff_view", "GitDiffPseudoView"),
-    "notion_markdown": ("notion_view", "NotionPseudoView"),
-    "pdf_reader": ("pdf_view", "PDFReaderPseudoView"),
-    "stock_kline": ("stock_view", "StockKlinePseudoView"),
-    "json_validator": ("json_view", "JSONValidatorPseudoView"),
-    "sys_monitor": ("sysmon_view", "SysMonitorPseudoView"),
-    "calculator_gui": ("calc_view", "CalculatorPseudoView"),
-    "database_dbeaver": ("dbeaver_view", "DBDBeaverPseudoView"),
-    "jupyter_notebook": ("jupyter_view", "JupyterPseudoView"),
-    "deepl_translate": ("deepl_view", "DeepLTranslatePseudoView"),
-    "browser_devtools": ("devtools_view", "DevToolsPseudoView"),
-    "chat_teams": ("teams_view", "ChatTeamsPseudoView"),
-    "logcat_viewer": ("logcat_view", "LogcatPseudoView"),
-    "markdown_editor": ("markdown_view", "MarkdownEditorPseudoView"),
-    "jenkins_ci": ("jenkins_view", "JenkinsCIPseudoView"),
+STEALTH_VIEW_MAP = {
+    "floating": FloatingView,
+    "ide_pseudo": IDEPseudoView,
+    "cad_pseudo": CADPseudoView,
+    "excel_sheet": ExcelPseudoView,
+    "word_doc": WordPseudoView,
+    "terminal_cli": TerminalPseudoView,
+    "outlook_email": OutlookPseudoView,
+    "swagger_api": SwaggerPseudoView,
+    "git_diff": GitDiffPseudoView,
+    "notion_markdown": NotionPseudoView,
+    "pdf_reader": PDFReaderPseudoView,
+    "stock_kline": StockKlinePseudoView,
+    "json_validator": JSONValidatorPseudoView,
+    "sys_monitor": SysMonitorPseudoView,
+    "calculator_gui": CalculatorPseudoView,
+    "database_dbeaver": DBDBeaverPseudoView,
+    "jupyter_notebook": JupyterPseudoView,
+    "deepl_translate": DeepLTranslatePseudoView,
+    "browser_devtools": DevToolsPseudoView,
+    "chat_teams": ChatTeamsPseudoView,
+    "logcat_viewer": LogcatPseudoView,
+    "markdown_editor": MarkdownEditorPseudoView,
+    "jenkins_ci": JenkinsCIPseudoView,
 }
-
-class _StealthViewMapDict(dict):
-    def __getitem__(self, key):
-        if key in self:
-            return super().__getitem__(key)
-        if key in _VIEW_MODULE_MAP:
-            mod_name, cls_name = _VIEW_MODULE_MAP[key]
-            mod = importlib.import_module(f"src.ui.stealth_views.{mod_name}")
-            cls = getattr(mod, cls_name)
-            self[key] = cls
-            return cls
-        raise KeyError(key)
-
-    def __contains__(self, key):
-        return super().__contains__(key) or key in _VIEW_MODULE_MAP
-
-STEALTH_VIEW_MAP = _StealthViewMapDict()

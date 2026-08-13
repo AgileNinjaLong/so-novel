@@ -84,6 +84,7 @@ class LogTextEdit(QTextEdit):
 class IDEPseudoView(BaseStealthWindow):
     def __init__(self, config_manager, parent=None, bookshelf_window=None):
         super().__init__(config_manager, parent=parent, bookshelf_window=bookshelf_window)
+        self.mode_name = "ide_pseudo"
         self.init_ui()
 
     def get_line_length(self) -> int:

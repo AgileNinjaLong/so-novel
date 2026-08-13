@@ -6,6 +6,7 @@ from src.ui.base_window import BaseStealthWindow
 class FloatingView(BaseStealthWindow):
     def __init__(self, config_manager, parent=None, bookshelf_window=None):
         super().__init__(config_manager, parent=parent, bookshelf_window=bookshelf_window)
+        self.mode_name = "floating"
         self.scroll_y = 0.0
         self.line_height = 28
         self.init_ui()

@@ -1149,15 +1149,10 @@ class BookshelfWindow(QMainWindow):
                 return
 
         mode = self.config_manager.settings.get("mode", "floating")
-        if mode == "ide_pseudo":
-            from src.ui.ide_pseudo_view import IDEPseudoView
-            win = IDEPseudoView(self.config_manager, bookshelf_window=self)
-        elif mode == "cad_pseudo":
-            from src.ui.cad_pseudo_view import CADPseudoView
-            win = CADPseudoView(self.config_manager, bookshelf_window=self)
-        else:
-            from src.ui.floating_view import FloatingView
-            win = FloatingView(self.config_manager, bookshelf_window=self)
+        from src.ui.stealth_views import STEALTH_VIEW_MAP
+        from src.ui.floating_view import FloatingView
+        view_cls = STEALTH_VIEW_MAP.get(mode, FloatingView)
+        win = view_cls(self.config_manager, bookshelf_window=self)
 
         # 连接实时进度信号槽
         win.progress_updated_signal.connect(self.on_reading_progress_updated)

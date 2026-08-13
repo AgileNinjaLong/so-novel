@@ -134,35 +134,27 @@ class BaseStealthWindow(QWidget):
         self.reading_shortcuts.append(sc_esc)
 
     def switch_to_mode(self, new_mode: str):
-        """实时响应快捷键或右键菜单，在当前获焦的摸鱼窗口中一键无缝切换 21 种伪装模式"""
+        """实时响应快捷键或右键菜单，在当前获焦的摸鱼窗口中一键无缝切换 23 种伪装模式"""
         if not self.config_mgr:
             return
-        curr_mode = self.config_mgr.settings.get("mode", "floating")
+        curr_mode = getattr(self, 'mode_name', self.config_mgr.settings.get("mode", "floating"))
         self.config_mgr.settings["mode"] = new_mode
         self.config_mgr.save_immediately()
 
-        if curr_mode == new_mode and getattr(self, 'mode_name', '') == new_mode:
+        if curr_mode == new_mode:
             return
 
-        book_path = self.book.file_path if self.book else None
+        book_path = self.book.file_path if (self.book and hasattr(self.book, 'file_path')) else None
 
         from src.ui.stealth_views import STEALTH_VIEW_MAP
-        if new_mode in STEALTH_VIEW_MAP:
-            view_cls = STEALTH_VIEW_MAP[new_mode]
-            new_win = view_cls(self.config_mgr, bookshelf_window=self.bookshelf_window)
-        elif new_mode == "ide_pseudo":
-            from src.ui.ide_pseudo_view import IDEPseudoView
-            new_win = IDEPseudoView(self.config_mgr, bookshelf_window=self.bookshelf_window)
-        elif new_mode == "cad_pseudo":
-            from src.ui.cad_pseudo_view import CADPseudoView
-            new_win = CADPseudoView(self.config_mgr, bookshelf_window=self.bookshelf_window)
-        else:
-            from src.ui.floating_view import FloatingView
-            new_win = FloatingView(self.config_mgr, bookshelf_window=self.bookshelf_window)
+        from src.ui.floating_view import FloatingView
+        view_cls = STEALTH_VIEW_MAP.get(new_mode, FloatingView)
+        new_win = view_cls(self.config_mgr, bookshelf_window=self.bookshelf_window)
+
+        if self.bookshelf_window:
+            new_win.progress_updated_signal.connect(self.bookshelf_window.on_reading_progress_updated)
 
         if book_path and os.path.exists(book_path):
-            if self.bookshelf_window:
-                new_win.progress_updated_signal.connect(self.bookshelf_window.on_reading_progress_updated)
             new_win.load_file(book_path)
             if self.bookshelf_window and hasattr(self.bookshelf_window, 'active_reading_windows'):
                 self.bookshelf_window.active_reading_windows[book_path] = new_win
