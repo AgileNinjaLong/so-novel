@@ -983,24 +983,14 @@ class BookshelfWindow(QMainWindow):
             f_size = self.config_manager.get_mode_style(mode_key, "font_size", 12)
             f_color = self.config_manager.get_mode_style(mode_key, "font_color", "")
             if not f_color:
-                # 默认回退逻辑，如果在对应 view 未显式声明，给个基础默认
                 f_color = "#FFFFFF" if mode_key == "ide_pseudo" else "#333333"
-            
+
             self.font_size_spin.blockSignals(True)
             self.font_size_spin.setValue(f_size)
             self.font_size_spin.blockSignals(False)
-            
+
             self.current_font_color = f_color
             self.font_color_btn.setStyleSheet(f"background-color: {f_color}; color: {'#000' if f_color.upper() == '#FFFFFF' else '#FFF'};")
-
-        def _pick_color():
-            from PyQt6.QtWidgets import QColorDialog
-            color = QColorDialog.getColor(QColor(self.current_font_color), self, "选择字体颜色")
-            if color.isValid():
-                self.current_font_color = color.name()
-                self.font_color_btn.setStyleSheet(f"background-color: {self.current_font_color}; color: {'#000' if self.current_font_color.upper() == '#FFFFFF' else '#FFF'};")
-                mode_key = self.style_mode_combo.currentData()
-                self.config_manager.set_mode_style(mode_key, "font_color", self.current_font_color)
 
         def _on_font_size_changed(val):
             mode_key = self.style_mode_combo.currentData()
@@ -1020,21 +1010,21 @@ class BookshelfWindow(QMainWindow):
         self.font_color_btn.clicked.connect(_pick_color)
         self.font_size_spin.valueChanged.connect(_on_font_size_changed)
         self.style_mode_combo.currentIndexChanged.connect(_on_mode_changed)
-        
+
         form_style.addRow("🎯 选择需配置的模式:", self.style_mode_combo)
         form_style.addRow("🔠 独立字体大小:", self.font_size_spin)
         form_style.addRow("🎨 独立字体颜色:", self.font_color_btn)
         layout.addWidget(group_style)
-        
+
         # 初始化加载当前选中的模式样式
         _on_mode_changed(0)
 
-    def _notify_style_changed(self, mode_key: str):
-        for win in self.active_reading_windows.values():
-            if win and getattr(win, 'mode_name', '') == mode_key:
-                if hasattr(win, 'apply_mode_style'):
-                    win.apply_mode_style()
-                win.update_content()
+        def _notify_style_changed(mode_key: str):
+            for win in self.active_reading_windows.values():
+                if win and getattr(win, 'mode_name', '') == mode_key:
+                    if hasattr(win, 'apply_mode_style'):
+                        win.apply_mode_style()
+                    win.update_content()
 
         # ========================================
 

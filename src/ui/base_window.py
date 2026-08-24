@@ -300,16 +300,17 @@ class BaseStealthWindow(QWidget):
 
     def apply_mode_style(self):
         """应用从配置获取的具体模式的字体大小和颜色（子类可扩展覆盖具体控件的样式更新）"""
-        if not hasattr(self, 'editor') or not self.editor:
+        widget = getattr(self, 'editor', getattr(self, 'table', None))
+        if not widget:
             return
             
         f_size = self.config_mgr.get_mode_style(self.mode_name, "font_size", -1)
         f_color = self.config_mgr.get_mode_style(self.mode_name, "font_color", "")
         
         if f_size > 0:
-            font = self.editor.font()
+            font = widget.font()
             font.setPointSize(int(f_size))
-            self.editor.setFont(font)
+            widget.setFont(font)
             
         if f_color:
             from PyQt6.QtGui import QColor
@@ -317,15 +318,22 @@ class BaseStealthWindow(QWidget):
             luminance = (0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()) / 255.0
             bg_color = "#FFFFFF" if luminance < 0.5 else "#2D2D2D"
             
-            # 使用通用的 QSS 追加（不覆盖原有的边框等设置）
-            current_qss = self.editor.styleSheet()
+            # 移除旧的动态注入样式，避免无限叠加
+            current_qss = widget.styleSheet()
+            import re
+            current_qss = re.sub(r'/\* DYNAMIC_STYLE_START \*/.*?/\* DYNAMIC_STYLE_END \*/', '', current_qss, flags=re.DOTALL)
+            
+            widget_class = widget.metaObject().className()
+            
             new_qss = current_qss + f"""
-                QWidget {{
-                    color: {f_color};
-                    background-color: {bg_color};
-                }}
+            /* DYNAMIC_STYLE_START */
+            {widget_class} {{
+                color: {f_color} !important;
+                background-color: {bg_color} !important;
+            }}
+            /* DYNAMIC_STYLE_END */
             """
-            self.editor.setStyleSheet(new_qss)
+            widget.setStyleSheet(new_qss)
 
     def render_view(self, error_msg: str = None):
         """抽象方法，子类必须实现。用于将 self.book, self.lines 和进度更新到 UI"""
