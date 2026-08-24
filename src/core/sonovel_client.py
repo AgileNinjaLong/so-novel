@@ -151,6 +151,18 @@ class SoNovelClient:
                         result = result.replace(match.group(1), match.group(2))
         return result
 
+    def _select_elements(self, tree, selector: str):
+        if not selector:
+            return []
+        try:
+            if selector.startswith('//') or selector.startswith('./') or selector.startswith('(/'):
+                return tree.xpath(selector)
+            else:
+                from lxml.cssselect import CSSSelector
+                return CSSSelector(selector)(tree)
+        except Exception:
+            return []
+
     def _extract_text(self, tree, rule_str: str, base_url: str = "") -> str:
         if tree is None or not rule_str:
             return ""
@@ -395,6 +407,9 @@ class SoNovelClient:
                         test_executor.shutdown(wait=False, cancel_futures=True)
                         search_executor.shutdown(wait=False, cancel_futures=True)
                         return []
+
+                if test_finished_callback and not (cancel_event and cancel_event.is_set()):
+                    test_finished_callback()
 
                 # 等待所有已发起的搜书任务完成并收集结果
                 for f in list(search_futures):

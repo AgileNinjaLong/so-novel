@@ -322,6 +322,13 @@ class BaseStealthWindow(QWidget):
             font.setPointSize(int(f_size))
             widget.setFont(font)
             
+            # 如果是表格模式，需要自动调整行高以防被大字体截断
+            from PyQt6.QtWidgets import QTableWidget
+            if isinstance(widget, QTableWidget):
+                from PyQt6.QtGui import QFontMetrics
+                fm = QFontMetrics(font)
+                widget.verticalHeader().setDefaultSectionSize(fm.height() + 8)
+            
         if f_color:
             from PyQt6.QtGui import QColor
             c = QColor(f_color)
