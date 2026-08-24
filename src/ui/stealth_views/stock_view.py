@@ -50,12 +50,15 @@ class StockKlinePseudoView(BaseStealthWindow):
         display_lines = self.lines[start:end]
 
         self.table.setRowCount(len(display_lines))
+        f_color = self.config_mgr.get_mode_style(self.mode_name, "font_color", "")
+
         for i, line_text in enumerate(display_lines):
             t_str = f"600{start+i:03d}"
             self.table.setItem(i, 0, QTableWidgetItem(t_str))
             self.table.setItem(i, 1, QTableWidgetItem(f"32.{i:02d} / 33.{i:02d}"))
-            
+
             val_item = QTableWidgetItem(line_text)
-            val_item.setForeground(QColor("#FF5252" if i % 2 == 0 else "#00E676"))
+            actual_color = f_color if f_color else ("#FF5252" if i % 2 == 0 else "#00E676")
+            val_item.setForeground(QColor(actual_color))
             self.table.setItem(i, 2, val_item)
             self.table.setItem(i, 3, QTableWidgetItem(f"+{1.2 + i*0.1:.2f}%"))

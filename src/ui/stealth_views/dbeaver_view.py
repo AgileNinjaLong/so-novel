@@ -50,10 +50,12 @@ class DBDBeaverPseudoView(BaseStealthWindow):
         display_lines = self.lines[start:end]
 
         self.table.setRowCount(len(display_lines))
+        f_color = self.config_mgr.get_mode_style(self.mode_name, "font_color", "#CE9178")
+
         for i, line_text in enumerate(display_lines):
             self.table.setItem(i, 0, QTableWidgetItem(f"{start+i+1}"))
             self.table.setItem(i, 1, QTableWidgetItem(f"SELECT * FROM tbl_{start+i}"))
-            
+
             val_item = QTableWidgetItem(line_text)
-            val_item.setForeground(QColor("#CE9178"))
+            val_item.setForeground(QColor(f_color))
             self.table.setItem(i, 2, val_item)

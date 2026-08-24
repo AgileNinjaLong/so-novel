@@ -56,12 +56,14 @@ class ExcelPseudoView(BaseStealthWindow):
         display_lines = self.lines[start:end]
 
         self.table.setRowCount(len(display_lines))
+        f_color = self.config_mgr.get_mode_style(self.mode_name, "font_color", "#9CDCFE")
+        
         for i, line_text in enumerate(display_lines):
             row_num = start + i + 1
             self.table.setItem(i, 0, QTableWidgetItem(f"R_{row_num:03d}"))
             self.table.setItem(i, 1, QTableWidgetItem(f"=VAL(\"C{row_num}\")"))
             
             val_item = QTableWidgetItem(line_text)
-            val_item.setForeground(QColor("#9CDCFE"))
+            val_item.setForeground(QColor(f_color))
             self.table.setItem(i, 2, val_item)
             self.table.setItem(i, 3, QTableWidgetItem("CALCULATED"))
