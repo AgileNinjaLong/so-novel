@@ -589,89 +589,111 @@ class SoNovelClient:
 
         return unique_chapters
 
-    def download_chapter(self, chapter_url: str, rule: dict) -> str:
+    def download_chapter(self, chapter_url: str, rule: dict, session=None, cancel_event=None, min_interval: float = 0.2, max_interval: float = 0.4, chap_title: str = "") -> str:
         chap_rule = rule.get("chapter", {})
         ignore_ssl = rule.get("ignoreSsl", False)
         content_parts = []
         current_url = chapter_url
         visited = set()
+        
+        req_session = session if session else self.session
 
         while current_url and current_url not in visited:
+            if cancel_event and cancel_event.is_set():
+                break
             visited.add(current_url)
             resp = None
             parsed = urllib.parse.urlparse(current_url)
-            req_headers = dict(self.headers)
+            req_headers = dict(req_session.headers)
             req_headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
             req_headers["Host"] = parsed.netloc
 
-            # 自动重试机制（最多重试3次）
             for attempt in range(3):
+                if cancel_event and cancel_event.is_set():
+                    break
                 try:
-                    resp = self.session.get(current_url, headers=req_headers, timeout=12, verify=not ignore_ssl)
+                    resp = req_session.get(current_url, headers=req_headers, timeout=(4.0, 8.0), verify=not ignore_ssl)
                     if resp.status_code == 200:
                         break
                 except Exception:
                     if attempt < 2:
-                        time.sleep(0.5 * (attempt + 1))
-                    else:
-                        try:
-                            resp = requests.get(current_url, headers=req_headers, timeout=12, verify=not ignore_ssl, proxies={"http": None, "https": None})
-                        except Exception:
-                            pass
+                        time.sleep(random.uniform(1.0, 2.5))
 
             if not resp or resp.status_code != 200:
-                return "(本章下载失败，请稍后重新下载)"
+                return "(本章下载失败)"
 
             try:
                 if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                     resp.encoding = resp.apparent_encoding
-
-                tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
                 
-                # 过滤标签
+                tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
                 filter_tags = [t.strip() for t in chap_rule.get("filterTag", "").split(',') if t.strip()]
                 for tag in filter_tags:
                     for match in self._select_elements(tree, tag):
                         match.drop_tree()
                 
                 content_rule = chap_rule.get("content", "")
-                js_code = ""
-                if '@js:' in content_rule:
-                    content_rule, js_code = content_rule.split('@js:', 1)
+                dsl = ""
+                at_idx = content_rule.find('@')
+                if at_idx != -1 and (content_rule[at_idx:].startswith("@js:") or content_rule[at_idx:].startswith("@java:")):
+                    dsl = content_rule[at_idx:]
+                    content_rule = content_rule[:at_idx]
 
                 content_nodes = self._select_elements(tree, content_rule)
                 if not content_nodes:
                     break
                     
                 node = content_nodes[0]
-                if js_code:
+                if dsl:
                     raw_inner_html = html.tostring(node, encoding='unicode', method='html')
-                    processed_html = self._apply_js(raw_inner_html, js_code)
+                    processed_html = self._execute_dsl(raw_inner_html, dsl)
                     node = html.fromstring(processed_html)
                 
-                # 获取纯文本，替换 <br> 为 \n
                 for br in node.xpath(".//br"):
                     br.tail = "\n" + (br.tail or "")
                 for p in node.xpath(".//p"):
                     p.tail = "\n" + (p.tail or "")
                     
                 text = node.text_content()
-                
                 # 【对齐 so-novel-main CrawlUtils.java】清理控制符与私有区不可见字符
                 text = re.sub(r'[\x00-\x1f\x7f-\x9f\u200b-\u200f\ufeff]', '', text)
 
-                # 过滤正则文本
+                # 擦除正文开头重复出现的章节标题
+                if chap_title and text.startswith(chap_title):
+                    text = text[len(chap_title):].lstrip()
+
                 filter_txt = chap_rule.get("filterTxt", "")
                 if filter_txt:
                     text = re.sub(filter_txt, '', text)
                     
                 content_parts.append("\n".join([line.strip() for line in text.splitlines() if line.strip()]))
-                
-                # 章节分页
+
+                # 章节多页分页 nextPage 处理
+                next_url = None
+                next_page_in_js = chap_rule.get("nextPageInJs", "")
                 next_page_rule = chap_rule.get("nextPage", "")
-                if next_page_rule:
+                next_els = self._select_elements(tree, next_page_rule) if next_page_rule else []
+                
+                if next_page_in_js:
+                    next_url = self._extract_text(tree, next_page_in_js, resp.url)
+                elif next_page_rule:
                     next_url = self._extract_text(tree, next_page_rule, resp.url)
-                    if next_url and next_url != current_url and next_url.startswith("http"):
+                    
+                if next_url:
+                    if not next_url.startswith("http"):
+                        next_url = urllib.parse.urljoin(resp.url, next_url)
+
+                    # 判断是否为分页最后一页
+                    is_last = False
+                    next_chapter_link = chap_rule.get("nextChapterLink", "")
+                    if next_chapter_link and re.match(next_chapter_link, next_url):
+                        is_last = True
+                    else:
+                        next_els_text = next_els[0].text_content() if next_els and hasattr(next_els[0], 'text_content') else ""
+                        if next_els_text and not re.match(r".*[-_]\d\.html", next_url) and re.match(r".*(下一章|没有了|>>|书末页).*", next_els_text):
+                            is_last = True
+
+                    if not is_last and next_url != current_url:
                         current_url = next_url
                         continue
                 break

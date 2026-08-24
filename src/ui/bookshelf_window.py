@@ -185,7 +185,7 @@ class DownloadWorker(QObject):
                     # 遵循 SoNovel 原生防刷规则：每条线程发请求前进行随机微延时，避开网站反爬机制
                     if max_interval > 0:
                         time.sleep(random.uniform(min_interval, max_interval))
-                    content = self.download_chapter_isolated(chap["url"], rule, min_interval, max_interval)
+                    content = self.client.download_chapter(chap["url"], rule, session=self.session, cancel_event=self.cancel_event, min_interval=min_interval, max_interval=max_interval, chap_title=chap["title"])
                     return i, content
                 except Exception as e:
                     return i, f"下载失败: {e}"
@@ -225,7 +225,7 @@ class DownloadWorker(QObject):
                     chap = toc[idx]
                     try:
                         time.sleep(random.uniform(1.5, 3.0)) # 退避重试延时
-                        res = self.download_chapter_isolated(chap["url"], rule, min_interval, max_interval)
+                        res = self.client.download_chapter(chap["url"], rule, session=self.session, cancel_event=self.cancel_event, min_interval=min_interval, max_interval=max_interval, chap_title=chap["title"])
                         if "下载失败" not in res and "解析失败" not in res:
                             chapter_contents[idx] = res
                     except Exception:
@@ -428,6 +428,11 @@ class AutoUpdateWorker(QObject):
                 added_count = new_total - existing_total
                 self.task_progress_signal.emit(task_id, existing_total, new_total, f"发现 {added_count} 章新章节，准备追更...")
 
+                # 【修复追更防刷问题】获取该书源的请求并发与延时限制
+                rule_crawl = rule.get("crawl", {}) if isinstance(rule, dict) else {}
+                min_interval = float(rule_crawl.get("minInterval", 200)) / 1000.0
+                max_interval = float(rule_crawl.get("maxInterval", 400)) / 1000.0
+
                 import concurrent.futures
                 chapter_contents = [None] * new_total
 
@@ -435,19 +440,17 @@ class AutoUpdateWorker(QObject):
                     if self.cancel_event.is_set():
                         return i, None
                     try:
-                        resp = session.get(chap["url"], timeout=(4.0, 10.0))
-                        if resp.status_code == 200:
-                            from lxml import html
-                            tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding or resp.apparent_encoding))
-                            content_nodes = self.client._select_elements(tree, rule.get("chapter", {}).get("content", ""))
-                            if content_nodes:
-                                text = content_nodes[0].text_content()
-                                return i, "\n".join([l.strip() for l in text.splitlines() if l.strip()])
+                        # 遵循 SoNovel 原生防刷规则，加入追更休眠延时
+                        if max_interval > 0:
+                            time.sleep(random.uniform(min_interval, max_interval))
+                        content = self.client.download_chapter(chap["url"], rule, session=session, cancel_event=self.cancel_event, min_interval=min_interval, max_interval=max_interval, chap_title=chap["title"])
+                        return i, content
                     except Exception:
                         pass
                     return i, "(追更本章暂无内容)"
 
-                executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+                # 追更不需要高并发抢占资源，使用较低的保守线程数 (最大3) 模拟真人追更
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
                 try:
                     futures = {executor.submit(_download_chap, i, toc[i]): i for i in range(existing_total, new_total)}
                     for future in concurrent.futures.as_completed(futures):
@@ -1015,7 +1018,7 @@ class BookshelfWindow(QMainWindow):
             self.style_mode_combo.addItem(m_name, m_key)
             
         self.font_size_spin = QDoubleSpinBox()
-        self.font_size_spin.setRange(8, 72)
+        self.font_size_spin.setRange(9.0, 48.0)
         self.font_size_spin.setDecimals(1)
         self.font_size_spin.setSuffix(" pt")
         
@@ -1035,6 +1038,7 @@ class BookshelfWindow(QMainWindow):
             self.font_size_spin.blockSignals(False)
 
             self.current_font_color = f_color
+            self.font_color_btn.setText(f"选择字体颜色 ({f_color.upper()})")
             self.font_color_btn.setStyleSheet(f"background-color: {f_color}; color: {'#000' if f_color.upper() == '#FFFFFF' else '#FFF'};")
 
         def _on_font_size_changed(val):
@@ -1047,6 +1051,7 @@ class BookshelfWindow(QMainWindow):
             color = QColorDialog.getColor(QColor(self.current_font_color), self, "选择字体颜色")
             if color.isValid():
                 self.current_font_color = color.name()
+                self.font_color_btn.setText(f"选择字体颜色 ({self.current_font_color.upper()})")
                 self.font_color_btn.setStyleSheet(f"background-color: {self.current_font_color}; color: {'#000' if self.current_font_color.upper() == '#FFFFFF' else '#FFF'};")
                 mode_key = self.style_mode_combo.currentData()
                 self.config_manager.set_mode_style(mode_key, "font_color", self.current_font_color)
