@@ -76,7 +76,7 @@
     "url": "https://www.dxmwx.org/",
     "name": "大熊猫文学",
     "disabled": true,
-    "comment": "因 GFW/Cloudflare 屏蔽导致连通测试容易长时间卡顿，已默认禁用",
+    "comment": "",
     "needProxy": true,
     "search": {
       "url": "https://www.dxmwx.org/list/topall_%s.html",

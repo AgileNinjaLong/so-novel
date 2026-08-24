@@ -47,6 +47,7 @@ class SearchWorker(QObject):
     status_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
+    test_finished_signal = pyqtSignal()
 
     def __init__(self, client: SoNovelClient, keyword: str, search_type: str = "smart"):
         super().__init__()
@@ -79,6 +80,10 @@ class SearchWorker(QObject):
             def on_rule_tested(r_idx, r_name, is_ok, latency_ms):
                 try: self.rule_tested_signal.emit(r_idx, r_name, is_ok, latency_ms)
                 except RuntimeError: pass
+
+            def on_test_finished():
+                try: self.test_finished_signal.emit()
+                except RuntimeError: pass
             
             res = self.client.search(
                 self.keyword,
@@ -86,7 +91,8 @@ class SearchWorker(QObject):
                 callback=on_item, 
                 status_callback=on_status, 
                 cancel_event=self.cancel_event,
-                rule_tested_callback=on_rule_tested
+                rule_tested_callback=on_rule_tested,
+                test_finished_callback=on_test_finished
             )
             try: self.finished_signal.emit(res)
             except RuntimeError: pass
@@ -1327,6 +1333,7 @@ class BookshelfWindow(QMainWindow):
         self.search_worker.item_found_signal.connect(self.on_search_item_found)
         self.search_worker.status_signal.connect(self.on_search_status)
         self.search_worker.finished_signal.connect(self.on_search_finished)
+        self.search_worker.test_finished_signal.connect(self.setup_results_view)
         self.search_worker.error_signal.connect(self.on_search_error)
         self.search_worker.start()
 

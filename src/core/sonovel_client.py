@@ -271,7 +271,7 @@ class SoNovelClient:
         except Exception:
             return False, 0
 
-    def search(self, keyword: str, search_type: str = "smart", callback=None, status_callback=None, cancel_event=None, rule_tested_callback=None) -> List[Dict[str, Any]]:
+    def search(self, keyword: str, search_type: str = "smart", callback=None, status_callback=None, cancel_event=None, rule_tested_callback=None, test_finished_callback=None) -> List[Dict[str, Any]]:
         import concurrent.futures
         import difflib
         import time
@@ -295,6 +295,9 @@ class SoNovelClient:
                     is_ok = r_idx in valid_indices
                     lat = self.connectivity_cache.get("details", {}).get(r_idx, {}).get("latency_ms", 100)
                     rule_tested_callback(r_idx, r.get('name', ''), is_ok, lat if is_ok else 0)
+
+            if test_finished_callback:
+                test_finished_callback()
 
             # 阶段 2：在已验证书源上检索
             search_executor = concurrent.futures.ThreadPoolExecutor(max_workers=15)
