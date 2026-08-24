@@ -1440,6 +1440,8 @@ class BookshelfWindow(QMainWindow):
             self.search_table.setItem(row, 3, QTableWidgetItem(f"规则 #{st['rule_index'] + 1}"))
 
     def setup_results_view(self):
+        if getattr(self, 'search_view_mode', '') == "results":
+            return
         self.search_view_mode = "results"
         self.search_table.setRowCount(0)
         self.search_table.setColumnCount(4)
