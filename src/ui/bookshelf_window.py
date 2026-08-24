@@ -1732,7 +1732,7 @@ class BookshelfWindow(QMainWindow):
     def save_settings_tab(self):
         boss_key = self.boss_key_edit.keySequence().toString()
         self.config_manager.settings["boss_key"] = boss_key
-        
+
         for m_setting, edit in getattr(self, 'mode_shortcut_edits', {}).items():
             self.config_manager.settings[m_setting] = edit.keySequence().toString()
 
@@ -1744,7 +1744,19 @@ class BookshelfWindow(QMainWindow):
         self.config_manager.settings["auto_scroll_speed"] = self.auto_speed_spin.value()
 
         self.config_manager.save_immediately()
-        QMessageBox.information(self, "设置成功", "系统设置与快捷键已成功保存！")
+
+        # 根据当前选中的子 Tab 给予不同的提示信息
+        current_idx = self.settings_list.currentRow() if hasattr(self, 'settings_list') else -1
+        if current_idx == 0:
+            msg = "🎨 外观样式参数已自动实时生效并持久化保存！"
+        elif current_idx == 1:
+            msg = "⌨️ 快捷键绑定已成功保存并立即生效！"
+        elif current_idx == 2:
+            msg = "📖 阅读控制热键及滚屏设置已成功保存！"
+        else:
+            msg = "系统设置与快捷键已成功保存！"
+
+        QMessageBox.information(self, "设置成功", msg)
 
     # ====== 最小化托盘与防呆关闭事件 =====
     def changeEvent(self, event):
