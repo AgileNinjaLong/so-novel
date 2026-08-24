@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.pcdd</groupId>
+    <artifactId>so-novel</artifactId>
+    <version>1.10.2</version>
+    <packaging>jar</packaging>
+    <name>so-novel</name>
+    <url>https://github.com/freeok/so-novel</url>
+    <description>网络小说下载器</description>
+    <inceptionYear>2021</inceptionYear>
+    <organization>
+        <name>freeok</name>
+        <url>https://github.com/freeok/</url>
+    </organization>
+
+    <build>
+        <plugins>
+            <!--
+            GraalVM 提供一个叫 Native Image 的功能，可以把 Java 程序编译成独立的本地可执行文件（native executable），这个可执行文件：
+            - 不依赖 JVM 就能运行。
+            - 启动速度极快（几乎瞬间启动）。
+            - 内存占用低。
+            - 适合微服务、命令行工具、短生命周期程序。
+
+            插件文档：https://graalvm.github.io/native-build-tools/latest/end-to-end-maven-guide.html
+            native image 坑比较多，需要配置许多 buildArgs 才可正常使用可执行文件
+
+            使用步骤：
+            1. 安装较新版本的 GraalVM 并设置 JAVA_HOME
+            2. 安装 Visual Studio Build Tools，选择“使用C++的桌面开发”，只勾选 MSVC v143 和 Windows 11 SDK
+            3. 解决反射/动态代理问题：java -agentlib:native-image-agent=config-output-dir=src/main/resources/META-INF/native-image -jar target/app-jar-with-dependencies.jar，然后运行全部测试用例，代理会监控所有动态特性的调用，并自动在指定目录生成所需的 JSON 配置文件。这是管理和维护元数据的最佳实践
+            4. mvn clean package "-Dmaven.test.skip=true"
+
+            注意：第 4 步默认只能在 x64 Native Tools Command Prompt 下执行，因为要调用 native-image.cmd。若要在其它终端运行，需修改 native-image.cmd
+            @echo off 下一行加上 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" > nul
+
+            目前无法解决的库：Javet，依赖 JNI / 本地动态库
+            -->
+            <plugin>
+                <groupId>org.graalvm.buildtools</groupId>
+                <artifactId>native-maven-plugin</artifactId>
+                <version>1.0.0</version>
+                <extensions>true</extensions>
+                <executions>
+                    <execution>
+                        <id>build-native</id>
+                        <goals>
+                            <goal>compile-no-fork</goal>
+                        </goals>
+                        <phase>package</phase>
+                    </execution>
+                </executions>
+                <configuration>
+                    <mainClass>com.pcdd.sonovel.Main</mainClass>
+                    <imageName>sonovel</imageName>
+                    <buildArgs>
+                        <buildArg>-H:DefaultCharset=GB18030</buildArg>
+
+                        <!-- HanLP 需要 data/dictionary/ -->
+                        <buildArg>-H:IncludeResources=data/dictionary/.*</buildArg>
+                        <buildArg>-H:IncludeResources=application.properties|ascii-logo.txt|static/.*|templates/.*
+                        </buildArg>
+
+                        <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
+                        <buildArg>-H:+ReportExceptionStackTraces</buildArg>
+                        <buildArg>-H:ConfigurationFileDirectories=src/main/resources/META-INF/native-image</buildArg>
+                        <buildArg>--enable-url-protocols=http,https,file,resource,JAR</buildArg>
+                        <!-- <buildArg>&#45;&#45;enable-preview</buildArg> -->
+                    </buildArgs>
+                    <jvmArgs>
+                        <arg>-Dfile.encoding=GB18030</arg>
+                    </jvmArgs>
+                </configuration>
+            </plugin>
+            <!-- 在终端运行项目 -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.1</version>
+                <configuration>
+                    <mainClass>com.pcdd.sonovel.Main</mainClass>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <configuration>
+                    <propertiesEncoding>UTF-8</propertiesEncoding>
+                </configuration>
+            </plugin>
+        </plugins>
+
+        <resources>
+            <!-- resources 的文件用 @..@ 获取 pom.xml 的 properties -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
+    </build>
+</project>

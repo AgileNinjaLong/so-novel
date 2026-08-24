@@ -95,42 +95,76 @@ class SoNovelClient:
                 payload[k] = v
         return payload
 
-    def _apply_js(self, text: str, js_code: str) -> str:
-        if not js_code:
+    def _execute_dsl(self, text: str, dsl: str) -> str:
+        if not dsl:
             return text
-        try:
-            ctx = _get_js_ctx()
-            # 将当前提取的文本变量绑定到 js 的 r 变量中
-            ctx.eval(f"var r = {json.dumps(text)};")
-            
-            # 由于 SoNovel 的 js 是直接操作 r 变量，如 r=r.replace(...)
-            # 所以我们需要执行完该语句后，返回 r 的最终值
-            js_script = js_code + "\n r;"
-            result = ctx.eval(js_script)
-            return str(result)
-        except Exception as e:
-            print(f"JS 执行异常: {e}\nCode: {js_code}")
-            return text
+        
+        # 解析 DSL (如 "r=r.replace(...);@java:base64.decode()")
+        steps = []
+        i = 0
+        while i != -1 and i < len(dsl):
+            at_idx = dsl.find("@", i)
+            if at_idx == -1:
+                if not steps: # 只有 js代码且没有前缀时，如果是老的 js_code 逻辑进来的，当作 js
+                    steps.append(("js", dsl.strip()))
+                break
+                
+            colon_idx = dsl.find(":", at_idx)
+            if colon_idx == -1:
+                break
+                
+            lang = dsl[at_idx + 1 : colon_idx]
+            next_at = dsl.find("@", colon_idx)
+            code = dsl[colon_idx + 1 : next_at if next_at != -1 else len(dsl)].strip()
+            steps.append((lang, code))
+            i = next_at
 
-    def _select_elements(self, tree, selector: str):
-        if not selector:
-            return []
-        try:
-            if selector.startswith('//') or selector.startswith('./') or selector.startswith('(/'):
-                return tree.xpath(selector)
-            else:
-                from lxml.cssselect import CSSSelector
-                return CSSSelector(selector)(tree)
-        except Exception:
-            return []
+        if not steps and dsl:
+             steps.append(("js", dsl.strip()))
+
+        result = text
+        for lang, code in steps:
+            if lang == "js":
+                try:
+                    ctx = _get_js_ctx()
+                    ctx.eval(f"var r = {json.dumps(result)};")
+                    result = str(ctx.eval(code + "\n r;"))
+                except Exception as e:
+                    print(f"JS 执行异常: {e}\nCode: {code}")
+            elif lang == "java":
+                if code == "base64.decode()":
+                    import base64
+                    try:
+                        decoded_lines = []
+                        for line in result.splitlines():
+                            line = line.strip()
+                            if line:
+                                decoded_lines.append(base64.b64decode(line).decode('utf-8', errors='ignore'))
+                        result = "".join(decoded_lines)
+                    except Exception as e:
+                        print(f"Base64 解码异常: {e}")
+                else:
+                    # 处理 string.replace(...)
+                    import re
+                    match = re.match(r"string\.replace\('([^']*)','([^']*)'\)", code)
+                    if match:
+                        result = result.replace(match.group(1), match.group(2))
+        return result
 
     def _extract_text(self, tree, rule_str: str, base_url: str = "") -> str:
         if tree is None or not rule_str:
             return ""
 
-        js_code = ""
-        if '@js:' in rule_str:
-            rule_str, js_code = rule_str.split('@js:', 1)
+        dsl = ""
+        at_idx = rule_str.find('@')
+        if at_idx != -1 and not rule_str.startswith('//') and ']' not in rule_str[at_idx:]:
+            # 区分属性提取 @href 与 DSL 提取 @js: / @java:
+            if rule_str[at_idx:].startswith("@js:") or rule_str[at_idx:].startswith("@java:"):
+                dsl = rule_str[at_idx:]
+                rule_str = rule_str[:at_idx]
+            else:
+                # 可能是属性提取如 @href
+                pass
 
         attr = None
         if '@' in rule_str and not rule_str.startswith('//') and ']' not in rule_str.split('@')[-1]:
@@ -153,8 +187,8 @@ class SoNovelClient:
             else:
                 text = str(element).strip()
 
-        if js_code:
-            text = self._apply_js(text, js_code)
+        if dsl:
+            text = self._execute_dsl(text, dsl)
 
         return text
 

@@ -303,18 +303,20 @@ class DownloadWorker(QObject):
                         match.drop_tree()
                 
                 content_rule = chap_rule.get("content", "")
-                js_code = ""
-                if '@js:' in content_rule:
-                    content_rule, js_code = content_rule.split('@js:', 1)
+                dsl = ""
+                at_idx = content_rule.find('@')
+                if at_idx != -1 and (content_rule[at_idx:].startswith("@js:") or content_rule[at_idx:].startswith("@java:")):
+                    dsl = content_rule[at_idx:]
+                    content_rule = content_rule[:at_idx]
 
                 content_nodes = self.client._select_elements(tree, content_rule)
                 if not content_nodes:
                     break
                     
                 node = content_nodes[0]
-                if js_code:
+                if dsl:
                     raw_inner_html = html.tostring(node, encoding='unicode', method='html')
-                    processed_html = self.client._apply_js(raw_inner_html, js_code)
+                    processed_html = self.client._execute_dsl(raw_inner_html, dsl)
                     node = html.fromstring(processed_html)
                 
                 for br in node.xpath(".//br"):

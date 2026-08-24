@@ -1,0 +1,41 @@
+name: Releases
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK and Maven
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          # 启用 Maven 依赖缓存，以提高构建速度
+          cache: 'maven'
+
+      - name: Build executable
+        shell: powershell
+        run: |
+          bash bin/release-windows.sh
+          bash bin/release-linux.sh
+          bash bin/release-linux.sh arm64
+          bash bin/release-macos.sh
+          bash bin/release-macos.sh x64
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          # 表示要上传到 Release 的产出文件。这可能是单个路径或以逗号分隔的路径列表（或 globs）
+          artifacts: "dist/*"
+          token: ${{ secrets.GITHUB_TOKEN  }}
+          bodyFile: "CHANGELOG.md"

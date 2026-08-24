@@ -259,19 +259,20 @@ class DownloadWorker(QObject):
                         match.drop_tree()
 
                 content_rule = chap_rule.get("content", "")
-                js_code = ""
-                if '@js:' in content_rule:
-                    content_rule, js_code = content_rule.split('@js:', 1)
+                dsl = ""
+                at_idx = content_rule.find('@')
+                if at_idx != -1 and (content_rule[at_idx:].startswith("@js:") or content_rule[at_idx:].startswith("@java:")):
+                    dsl = content_rule[at_idx:]
+                    content_rule = content_rule[:at_idx]
 
                 content_nodes = self.client._select_elements(tree, content_rule)
                 if not content_nodes:
                     break
 
                 node = content_nodes[0]
-
-                if js_code:
+                if dsl:
                     raw_inner_html = html.tostring(node, encoding='unicode', method='html')
-                    processed_html = self.client._apply_js(raw_inner_html, js_code)
+                    processed_html = self.client._execute_dsl(raw_inner_html, dsl)
                     node = html.fromstring(processed_html)
 
                 for br in node.xpath(".//br"):
@@ -290,11 +291,32 @@ class DownloadWorker(QObject):
 
                 content_parts.append("\n".join([line.strip() for line in text.splitlines() if line.strip()]))
 
-                # 章节内翻页处理
+                # 章节内翻页处理 (完全对齐 so-novel-main ChapterParser.java)
+                next_url = None
+                next_page_in_js = chap_rule.get("nextPageInJs", "")
                 next_page_rule = chap_rule.get("nextPage", "")
-                if next_page_rule:
+                next_els = self.client._select_elements(tree, next_page_rule) if next_page_rule else []
+                
+                if next_page_in_js:
+                    next_url = self.client._extract_text(tree, next_page_in_js, resp.url)
+                elif next_page_rule:
                     next_url = self.client._extract_text(tree, next_page_rule, resp.url)
-                    if next_url and next_url != current_url and next_url.startswith("http"):
+                    
+                if next_url:
+                    if not next_url.startswith("http"):
+                        next_url = urllib.parse.urljoin(resp.url, next_url)
+
+                    # 判断是否为分页最后一页 (对齐 isLastPage)
+                    is_last = False
+                    next_chapter_link = chap_rule.get("nextChapterLink", "")
+                    if next_chapter_link and re.match(next_chapter_link, next_url):
+                        is_last = True
+                    else:
+                        next_els_text = next_els[0].text_content() if next_els and hasattr(next_els[0], 'text_content') else ""
+                        if next_els_text and not re.match(r".*[-_]\d\.html", next_url) and re.match(r".*(下一章|没有了|>>|书末页).*", next_els_text):
+                            is_last = True
+
+                    if not is_last and next_url != current_url:
                         current_url = next_url
                         continue
                 break

@@ -1,0 +1,307 @@
+[
+  {
+    "url": "https://www.luegeng.com/",
+    "name": "略更网",
+    "comment": "疑似SSL证书过期，搜索限流，不支持IPv6",
+    "search": {
+      "url": "https://www.luegeng.com/search/?searchkey=%s",
+      "method": "get",
+      "result": ".content > dl",
+      "bookName": "dt > a",
+      "author": "dd > a",
+      "status": "dd:nth-child(4) > span:nth-child(2)",
+      "wordCount": "dd:nth-child(4) > span:nth-child(3)"
+    },
+    "book": {
+      "url": "https://www.luegeng.com/book(.*?)/",
+      "coverUrl": ".left > div > a > img"
+    },
+    "toc": {
+      "item": ".all > ul > li > a"
+    },
+    "chapter": {
+      "title": ".active",
+      "content": "#booktxt",
+      "paragraphTagClosed": true,
+      "filterTxt": "\\(本章完\\)",
+      "filterTag": "",
+      "nextPage": "#next_url"
+    }
+  },
+  {
+    "url": "http://www.81zwwww.com/",
+    "name": "八一中文网",
+    "comment": "请求需要携带响应的Cookie，否则403。章节限流",
+    "search": {
+      "url": "http://www.81zwwww.com/search/",
+      "method": "post",
+      "data": "{searchkey: %s, Submit: ''}",
+      "result": ".mb20 > div > div",
+      "bookName": ".commend-title > a",
+      "author": ".commend-title > span"
+    },
+    "book": {
+      "intro": ".info-main-intro > p",
+      ,
+      "latestChapter": ".info-main-wap > a > p@js:r=r.replaceAll('最新章节：','');"
+    },
+    "toc": {
+      "item": "body > div.container.border3-2.mt8.mb20 > div.info-chapters.flex.flex-wrap > a"
+    },
+    "chapter": {
+      "title": ".reader-main > h1@js:r=r.replace(/（\\d+ \\/ \\d+）/, '');",
+      "content": "#article",
+      "paragraphTagClosed": true,
+      "filterTxt": "\\(本章完\\)|最近转码严重，让我们更有动力，更新更快，麻烦你动动小手退出阅读模式。谢谢",
+      "filterTag": "",
+      "nextPage": "(//*[@id='next_url'])[1]"
+    }
+  },
+  {
+    "url": "https://69shux.co/",
+    "name": "69書吧",
+    "comment": "新加了CF，已无法使用。需要梯子，章节有限流，数量5w+",
+    "language": "zh_Hant",
+    "needProxy": true,
+    "search": {
+      "url": "https://69shux.co/search/%s/1.html",
+      "method": "get",
+      "cookies": "{'zh_choose':'s','_ga':'GA1.1.307367057.1740763296','cf_clearance':'lhmV_voO7kxHujKEcSTlinlwtdfUn404f3SNINvJP5s-1742481156-1.2.1.1-zZmDLFkkhDoxVlHaL0AE0HLcKdI_EFWf43nPpPJspPZl3GZo5mGBr8pd3C0ABtclWo6J9Mr4nAD2vuu9F8Kk6PyxY80Cp.RhuiW4xwkPvpkAgcwCv2ch_XjAZ6ByyjL1X.O4vSvrialdrl4VdM91eGjXO_Sg6RcOVGIcAqKJGehaDJsFRrgBbSoT1rxHBJYavwrwcd0CKFBaF.xPyMgPcFZ4YNyU0shIH7QVb87OF7qgtdelGmlCHLnaIbz9R9_tKz.zmRjqOI2xNjDuSCgJtgaMnmfp6_.wwk9tzbRRHpu9ai3kGdyrDNNHlOuti7ANNFxIe.pAaM73tGqgZGgSWaOG7mFigjH0swG0Z1tz2MSv3K.zcCs7OwBx3a0Ota.z','_ga_BBJPVSH9B2':'GS1.1.1742480542.5.1.1742481772.0.0.0'}",
+      "result": "#article_list_content > li > div.newnav",
+      "bookName": "h3 > a:last-child",
+      "author": "div.labelbox > label:nth-child(1)",
+      "category": "div.labelbox > label:nth-child(2)",
+      "latestChapter": "div.zxzj > p > a",
+      "status": "div.labelbox > label:nth-child(3)",
+      "nextPage": "#pagelink > a:not(.pgroup):not(.ngroup):not(.next)"
+    },
+    "book": {
+      "url": "https://69shux.co/book/(.*?).html"
+    },
+    "toc": {
+      "url": "https://69shux.co/ajax_novels/chapterlist/%s.html",
+      "item": "ul > li > a"
+    },
+    "chapter": {
+      "title": ".txtnav > h1",
+      "content": "#txtcontent",
+      "paragraphTag": "<br>+",
+      "paragraphTagClosed": false,
+      "filterTxt": "",
+      "filterTag": "div"
+    },
+    "crawl": {
+      "concurrency": 1,
+      "min": 1000,
+      "max": 2000,
+      "maxAttempts": 5,
+      "retryMin": 2000,
+      "retryMax": 5000
+    }
+  },
+  {
+    "url": "https://69shuba.cx/",
+    "name": "69书吧",
+    "comment": "需要梯子、正文内容纯净、搜索有CF、章节限流",
+    "needProxy": true,
+    "book": {
+      "url": "https://69shuba.cx/book/(.*?).htm@js:r=r.replace(/https:\\/\\/www\\.69shuba\\.me\\/book\\/(\\d+)\\.htm/,'https://69shuba.cx/book/$1.htm')||r",
+      "coverUrl": ".bookimg2 > img"
+    },
+    "toc": {
+      "url": "https://69shuba.cx/book/%s",
+      "item": "#catalog > ul > li > a",
+      "isDesc": true
+    },
+    "chapter": {
+      "title": ".txtnav > h1",
+      "content": ".txtnav",
+      "paragraphTagClosed": true,
+      "filterTxt": "无一错一首一发一内一容一在一6一9一书一吧一看！|\\(本章完\\)|最⊥新⊥小⊥说⊥在⊥六⊥9⊥⊥书⊥⊥吧⊥⊥首⊥发！",
+      "filterTag": "h1, div, br"
+    },
+    "crawl": {
+      "concurrency": 1,
+      "min": 1000,
+      "max": 2000,
+      "maxAttempts": 5,
+      "retryMin": 2000,
+      "retryMax": 5000
+    }
+  },
+  {
+    "url": "https://www.69yuedu.net/",
+    "name": "69阅读",
+    "comment": "需要梯子，搜索有CF、章节无限流",
+    "needProxy": true,
+    "book": {
+      "url": "https://www.69yuedu.net/article/(.*?).html",
+      "bookName": ".booknav2 > h1 > a",
+      "author": ".booknav2 > p:nth-child(2) > a",
+      "category": ".booknav2 > p:nth-child(3) > a",
+      "coverUrl": ".bookimg2 > img",
+      "latestChapter": "",
+      "lastUpdateTime": ".booknav2 > p:nth-child(5)@js:r=r.replaceAll('更新：','');",
+      "status": ".booknav2 > p:nth-child(4)@js:r=r.split('|')[1];"
+    },
+    "toc": {
+      "url": "https://www.69yuedu.net/chapters/%s.html",
+      "item": "#chapters > ul > li > a"
+    },
+    "chapter": {
+      "title": ".txtbox > h1",
+      "content": ".content",
+      "paragraphTagClosed": true,
+      "filterTxt": "\\(本章完\\)",
+      "filterTag": "div, br"
+    },
+    "crawl": {
+      "concurrency": 1,
+      "min": 1000,
+      "max": 2000,
+      "maxAttempts": 5,
+      "retryMin": 2000,
+      "retryMax": 5000
+    }
+  },
+  {
+    "url": "https://www.369book.cc/",
+    "name": "369小说网",
+    "comment": "已失效，网站被攻击导致数据丢失，搜索暂不可用。搜索(Read timed out)、章节有限流，章节爬取过快会封IP，章节页、目录页都有分页和反爬，搜索结果固定10条，以javascript:开头的href需要特殊处理，书籍数量57w+",
+    "search": {
+      "url": "https://www.369book.cc/search/?searchkey=%s",
+      "method": "get",
+      "result": ".am-panel-bd > div > div",
+      "bookName": "h4 > a",
+      "author": ".book-list-1-author@js:r=r.replace(/[\\/文\\s]/g,'');\n",
+      "latestChapter": ".am-badge-primary",
+      "lastUpdateTime": ".am-badge-secondary.am-radius"
+    },
+    "book": {
+      "url": "https://www.369book.cc/book/(.*?)/",
+      "coverUrl": ".book-info-cover > a > img"
+    },
+    "toc": {
+      "url": "https://www.369book.cc/index/%s/",
+      "item": ".am-list-news-bd > ul > li > a",
+      "nextPage": "(//select[@id='indexselect'])[1]/option@js:var matches=r.match(/javascript:Chapter\\('(\\d+)','(\\d+)\\.html'\\)/);if(r.match(/javascript:Chapter\\('(\\d+)','(\\d+)\\.html'\\)/)){r=\"https://www.369book.cc/read/\"+matches[1]+\"/\"+matches[2]+\".html\"}"
+    },
+    "chapter": {
+      "title": "ol > li.active",
+      "content": "#chaptercontent",
+      "paragraphTagClosed": true,
+      "filterTxt": ".*转载请注明来源：369小说网\\(www.369book.cc\\)|本章未完，请点击下一页继续阅读！",
+      "filterTag": "div",
+      "nextPage": ".book-read > div > div:nth-child(8) > a:nth-child(4)@js:var matches=r.match(/'(\\d+)',\\s*'([^']+)'/);if(matches){r=\"https://www.369book.cc/read/\"+matches[1]+\"/\"+matches[2]}"
+    }
+  },
+  {
+    "url": "https://www.11bqg.com/",
+    "name": "新笔趣阁",
+    "comment": "域名失效，https://github.com/freeok/so-novel/issues/148，即便修复，获取目录的速度也很慢：第 (10n - 5) 章的链接一定要通过上一章页面提取。且该书源非优质书源，修复弊大于利。",
+    "search": {
+      "url": "https://www.11bqg.com/search/",
+      "method": "post",
+      "data": "{type: articlename, searchkey: %s}",
+      "result": ".container > div > div > ul > li",
+      "bookName": "span.s2 > a@js:r=r.length>15?r.substring(0,15)+\"...\":r;",
+      "author": "span.s4@js:r=r.length>10?r.substring(0,10)+\"...\":r;",
+      "latestChapter": "span.s3 > a",
+      "lastUpdateTime": "span.s5"
+    },
+    "book": {
+      "url": "https://www.11bqg.com/(.*?)/",
+      "intro": ".desc.m-desc",
+      "coverUrl": ".imgbox > img",
+      "latestChapter": "meta[property=\"og:novel:lastest_chapter_name\"]"
+    },
+    "toc": {
+      "item": ".row.row-section > div > div:nth-child(4) > ul > li > a",
+      "nextPage": "#indexselect > option"
+    },
+    "chapter": {
+      "title": ".reader-main > h1@js:r=r.replace(/（\\d+\\s*\\/\\s*\\d+）/, '');",
+      "content": "#content",
+      "paragraphTagClosed": true,
+      "filterTxt": "\\(本章完\\)",
+      "filterTag": "a, script",
+      "nextPage": "(//*[@id='next_url'])[1]"
+    }
+  },
+  {
+    "url": "https://www.deqixs.com/",
+    "name": "得奇小说网",
+    "comment": "已失效。基本只有新书，爬取频率过快会长期封禁 IP (Remote host terminated the handshake)，搜索有限流 (Connection reset)",
+    "needProxy": true,
+    "search": {
+      "url": "https://www.deqixs.com/tag/?key=%s",
+      "method": "get",
+      "result": ".container > div",
+      "bookName": "div > h3 > a",
+      "author": "div > p:nth-child(3)@js:r=r.replaceAll('作者：', '');",
+      "latestChapter": "div > ul > li:nth-child(1) > a",
+      "lastUpdateTime": "div > ul > li:nth-child(1) > i"
+    },
+    "book": {
+      "url": "https://www.deqixs.com/xiaoshuo/(.*?)/",
+      "bookName": ".item > div > h1 > a",
+      "author": ".item > div > p:nth-child(3) > a@js:r=r.replaceAll('作者：', '');",
+      "intro": "//div[@class='des bb'][1]",
+      "category": ".item > div > p:nth-child(2) > span:nth-child(2)",
+      "coverUrl": ".item > a > img",
+      "latestChapter": ".item > div > ul > li:nth-child(1) > a",
+      "lastUpdateTime": ".item > div > ul > li:nth-child(1) > i",
+      "status": ".item > div > p:nth-child(2) > span:nth-child(1)"
+    },
+    "toc": {
+      "item": "#list > ul > li > a",
+      "nextPage": "#pages > .gr"
+    },
+    "chapter": {
+      "title": ".submenu > h1",
+      "content": ".con",
+      "paragraphTagClosed": true,
+      "filterTxt": "\\(本章完\\)",
+      "filterTag": "",
+      "nextPage": ".prenext > span:nth-child(3) > a"
+    },
+    "crawl": {
+      "concurrency": 1,
+      "minInterval": 1000,
+      "maxInterval": 2000
+    }
+  },
+  {
+    "url": "http://www.shu009.com/",
+    "name": "书林文学",
+    "comment": "该网页无法正常运作。源站目录有重复、缺章的情况。目录每页只有20章，翻页速度很慢",
+    "search": {
+      "url": "http://www.shu009.com/search/",
+      "method": "post",
+      "data": "{searchkey: %s, searchtype: all}",
+      "result": ".SHsectionThree > div > p",
+      "bookName": "span:nth-child(2) > a",
+      "author": "span:nth-child(3) > a",
+      "category": "span:nth-child(1) > a"
+    },
+    "book": {
+      "url": "http://www.shu009.com/book/(.*?)/",
+      "intro": "#intro > div",
+      "latestChapter": "meta[property=\"og:novel:lastest_chapter_name\"]"
+    },
+    "toc": {
+      "url": "http://www.shu009.com/indexlist/%s/",
+      "item": "ol > li > a",
+      "nextPage": "//select[@id='indexselect']/option"
+    },
+    "chapter": {
+      "title": "#chapterTitle@js:r=r.replace(/\\(\\d+\\/\\d+\\)/, '');",
+      "content": "#content",
+      "paragraphTagClosed": false,
+      "paragraphTag": "<br>+",
+      "filterTxt": "",
+      "filterTag": "center",
+      "nextPage": ".RBGsectionTwo-right > a"
+    }
+  }
+]

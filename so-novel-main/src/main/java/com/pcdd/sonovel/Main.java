@@ -1,0 +1,85 @@
+package com.pcdd.sonovel;
+
+import cn.hutool.core.lang.Console;
+import cn.hutool.core.util.ArrayUtil;
+import cn.hutool.log.dialect.console.ConsoleLog;
+import cn.hutool.log.level.Level;
+import com.openhtmltopdf.util.XRLog;
+import com.pcdd.sonovel.actions.CheckUpdateAction;
+import com.pcdd.sonovel.context.HttpClientContext;
+import com.pcdd.sonovel.core.AppConfigLoader;
+import com.pcdd.sonovel.context.OkHttpClientFactory;
+import com.pcdd.sonovel.launcher.CliLauncher;
+import com.pcdd.sonovel.launcher.TuiLauncher;
+import com.pcdd.sonovel.model.AppConfig;
+import com.pcdd.sonovel.repository.ClientReportRepository;
+import com.pcdd.sonovel.utils.EnvUtils;
+import com.pcdd.sonovel.web.WebServer;
+import org.fusesource.jansi.AnsiConsole;
+import picocli.CommandLine;
+
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+
+import static org.fusesource.jansi.AnsiRenderer.render;
+
+/**
+ * @author pcdd
+ * <p>
+ * Created at 2021/6/10
+ * <p>
+ * psh: {@code mvnd clean compile; mvn exec:java}
+ * <p>
+ * bash: {@code mvnd clean compile && mvn exec:java}
+ */
+public class Main {
+
+    static {
+        if (EnvUtils.isDev()) {
+            Console.log(render("当前为开发环境！", "red"));
+            Console.log("-".repeat(100));
+            RuntimeMXBean mxBean = ManagementFactory.getRuntimeMXBean();
+            Console.log("JVM 名称: " + mxBean.getVmName());
+            Console.log("JVM 供应商: " + mxBean.getVmVendor());
+            Console.log("JVM 版本: " + mxBean.getVmVersion());
+            Console.log("启动参数: " + mxBean.getInputArguments());
+            // Console.log("ClassPath: " + mxBean.getClassPath());
+            Console.log("-".repeat(100));
+        }
+        if (EnvUtils.isProd()) {
+            // 在 Windows 旧版 cmd 上启用 ANSI 转义码支持，避免彩色文字显示为乱码
+            AnsiConsole.systemInstall();
+            // 关闭 hutool 日志
+            ConsoleLog.setLevel(Level.OFF);
+            // 关闭 openhtmltopdf 日志
+            XRLog.listRegisteredLoggers().forEach(logger -> XRLog.setLevel(logger, java.util.logging.Level.OFF));
+        }
+    }
+
+    public static void main(String[] args) {
+        AppConfig cfg = AppConfigLoader.APP_CONFIG;
+        HttpClientContext.set(OkHttpClientFactory.create(cfg));
+
+        new Thread(ClientReportRepository::report).start();
+        if (cfg.getAutoUpdate() == 1) {
+            new CheckUpdateAction(5000).execute();
+        }
+
+        String mode = System.getProperty("mode", "tui");
+
+        if (cfg.getWebEnabled() == 1) {
+            new WebServer().start();
+        } else if (args.length == 0 && "tui".equalsIgnoreCase(mode)) {
+            TuiLauncher.launch(cfg);
+        } else if (args.length > 0 || "cli".equalsIgnoreCase(mode)) {
+            new CommandLine(new CliLauncher()).execute(ArrayUtil.isEmpty(args) ? new String[]{"-h"} : args);
+            System.exit(0);
+        } else {
+            Console.error("启动失败，请通过 -Dmode=web|tui|cli 指定启动模式");
+            System.exit(1);
+        }
+
+        HttpClientContext.clear();
+    }
+
+}

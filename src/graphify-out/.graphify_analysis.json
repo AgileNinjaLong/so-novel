@@ -1,0 +1,688 @@
+{
+  "communities": {
+    "0": [
+      "qdragmoveevent",
+      "qpoint",
+      "ui_base_window",
+      "ui_base_window_basestealthwindow",
+      "ui_base_window_basestealthwindow_contextmenuevent",
+      "ui_base_window_basestealthwindow_dragenterevent",
+      "ui_base_window_basestealthwindow_dragmoveevent",
+      "ui_base_window_basestealthwindow_dropevent",
+      "ui_base_window_basestealthwindow_enterevent",
+      "ui_base_window_basestealthwindow_get_line_length",
+      "ui_base_window_basestealthwindow_get_resize_edge",
+      "ui_base_window_basestealthwindow_get_visible_lines_count",
+      "ui_base_window_basestealthwindow_init",
+      "ui_base_window_basestealthwindow_jump_next_chap",
+      "ui_base_window_basestealthwindow_jump_prev_chap",
+      "ui_base_window_basestealthwindow_jump_to_chapter",
+      "ui_base_window_basestealthwindow_keypressevent",
+      "ui_base_window_basestealthwindow_leaveevent",
+      "ui_base_window_basestealthwindow_load_file",
+      "ui_base_window_basestealthwindow_mousemoveevent",
+      "ui_base_window_basestealthwindow_mousepressevent",
+      "ui_base_window_basestealthwindow_mousereleaseevent",
+      "ui_base_window_basestealthwindow_next_line",
+      "ui_base_window_basestealthwindow_on_auto_scroll_timeout",
+      "ui_base_window_basestealthwindow_open_chapter_dialog",
+      "ui_base_window_basestealthwindow_prev_line",
+      "ui_base_window_basestealthwindow_recalculate_lines",
+      "ui_base_window_basestealthwindow_reload_reading_shortcuts",
+      "ui_base_window_basestealthwindow_render_view",
+      "ui_base_window_basestealthwindow_reset_auto_scroll_timer",
+      "ui_base_window_basestealthwindow_resizeevent",
+      "ui_base_window_basestealthwindow_save_and_emit_progress",
+      "ui_base_window_basestealthwindow_setup_window_flags",
+      "ui_base_window_basestealthwindow_slow_down_auto_scroll",
+      "ui_base_window_basestealthwindow_speed_up_auto_scroll",
+      "ui_base_window_basestealthwindow_start_auto_scroll",
+      "ui_base_window_basestealthwindow_stop_auto_scroll",
+      "ui_base_window_basestealthwindow_switch_to_mode",
+      "ui_base_window_basestealthwindow_toggle_auto_scroll",
+      "ui_base_window_basestealthwindow_toggle_boss_key",
+      "ui_base_window_basestealthwindow_update_content",
+      "ui_base_window_basestealthwindow_update_opacity_by_hover",
+      "ui_base_window_basestealthwindow_wheelevent",
+      "ui_base_window_py_qdragenterevent",
+      "ui_base_window_py_qdropevent",
+      "ui_base_window_py_qkeyevent",
+      "ui_base_window_py_qmouseevent",
+      "ui_base_window_py_qwheelevent",
+      "ui_base_window_rationale_137",
+      "ui_base_window_rationale_284",
+      "ui_base_window_rationale_288",
+      "ui_base_window_rationale_296"
+    ],
+    "1": [
+      "core_epub_builder",
+      "core_epub_builder_epubbuilder",
+      "core_epub_builder_epubbuilder_build_epub",
+      "core_epub_builder_rationale_9",
+      "ui_download_dialog",
+      "ui_download_dialog_downloaddialog",
+      "ui_download_dialog_downloaddialog_cancel_download_task",
+      "ui_download_dialog_downloaddialog_cancel_search",
+      "ui_download_dialog_downloaddialog_closeevent",
+      "ui_download_dialog_downloaddialog_do_download",
+      "ui_download_dialog_downloaddialog_do_search",
+      "ui_download_dialog_downloaddialog_on_item_found",
+      "ui_download_dialog_downloaddialog_on_rule_tested",
+      "ui_download_dialog_downloaddialog_on_search_error",
+      "ui_download_dialog_downloaddialog_on_search_finished",
+      "ui_download_dialog_downloaddialog_on_search_status",
+      "ui_download_dialog_downloaddialog_on_task_cancelled",
+      "ui_download_dialog_downloaddialog_on_task_error",
+      "ui_download_dialog_downloaddialog_on_task_finished",
+      "ui_download_dialog_downloaddialog_on_task_progress",
+      "ui_download_dialog_downloaddialog_refresh_connectivity_table",
+      "ui_download_dialog_downloaddialog_setup_connectivity_view",
+      "ui_download_dialog_downloaddialog_setup_results_view",
+      "ui_download_dialog_downloadworker",
+      "ui_download_dialog_downloadworker_cancel",
+      "ui_download_dialog_downloadworker_download_chapter_isolated",
+      "ui_download_dialog_downloadworker_run",
+      "ui_download_dialog_downloadworker_start",
+      "ui_download_dialog_py_qdialog",
+      "ui_download_dialog_py_qobject",
+      "ui_download_dialog_rationale_209",
+      "ui_download_dialog_searchworker",
+      "ui_download_dialog_searchworker_cancel",
+      "ui_download_dialog_searchworker_run",
+      "ui_download_dialog_searchworker_start"
+    ],
+    "2": [
+      "core_config",
+      "core_config_configmanager",
+      "core_config_configmanager_add_to_bookshelf",
+      "core_config_configmanager_get_bookshelf",
+      "core_config_configmanager_get_last_file",
+      "core_config_configmanager_get_progress",
+      "core_config_configmanager_init",
+      "core_config_configmanager_load",
+      "core_config_configmanager_remove_from_bookshelf",
+      "core_config_configmanager_save",
+      "core_config_configmanager_save_immediately",
+      "core_config_configmanager_save_progress",
+      "core_config_py_any",
+      "core_config_py_qobject",
+      "main",
+      "main_handle_exception",
+      "main_novelreadapp",
+      "main_novelreadapp_init",
+      "main_novelreadapp_on_boss_key_triggered",
+      "main_novelreadapp_reload_boss_key",
+      "main_novelreadapp_run",
+      "qabstractnativeeventfilter",
+      "ui_boss_key",
+      "ui_boss_key_bosskeymanager",
+      "ui_boss_key_bosskeymanager_init",
+      "ui_boss_key_bosskeymanager_on_triggered",
+      "ui_boss_key_bosskeymanager_parse_shortcut",
+      "ui_boss_key_bosskeymanager_start",
+      "ui_boss_key_bosskeymanager_stop",
+      "ui_boss_key_py_qobject",
+      "ui_boss_key_windowsnativehotkeyfilter",
+      "ui_boss_key_windowsnativehotkeyfilter_init",
+      "ui_boss_key_windowsnativehotkeyfilter_nativeeventfilter"
+    ],
+    "3": [
+      "ui_stealth_views_common",
+      "ui_stealth_views_common_forwardtablewidget",
+      "ui_stealth_views_common_forwardtablewidget_init",
+      "ui_stealth_views_common_forwardtablewidget_keypressevent",
+      "ui_stealth_views_common_forwardtablewidget_wheelevent",
+      "ui_stealth_views_common_forwardtextedit_init",
+      "ui_stealth_views_common_forwardtextedit_keypressevent",
+      "ui_stealth_views_common_forwardtextedit_wheelevent",
+      "ui_stealth_views_common_py_qkeyevent",
+      "ui_stealth_views_common_py_qwheelevent",
+      "ui_stealth_views_dbeaver_view",
+      "ui_stealth_views_dbeaver_view_dbdbeaverpseudoview",
+      "ui_stealth_views_dbeaver_view_dbdbeaverpseudoview_init",
+      "ui_stealth_views_dbeaver_view_dbdbeaverpseudoview_init_ui",
+      "ui_stealth_views_dbeaver_view_dbdbeaverpseudoview_render_view",
+      "ui_stealth_views_excel_view",
+      "ui_stealth_views_excel_view_excelpseudoview",
+      "ui_stealth_views_excel_view_excelpseudoview_init",
+      "ui_stealth_views_excel_view_excelpseudoview_init_ui",
+      "ui_stealth_views_excel_view_excelpseudoview_render_view",
+      "ui_stealth_views_stock_view",
+      "ui_stealth_views_stock_view_stockklinepseudoview",
+      "ui_stealth_views_stock_view_stockklinepseudoview_init",
+      "ui_stealth_views_stock_view_stockklinepseudoview_init_ui",
+      "ui_stealth_views_stock_view_stockklinepseudoview_render_view",
+      "ui_stealth_views_sysmon_view",
+      "ui_stealth_views_sysmon_view_sysmonitorpseudoview",
+      "ui_stealth_views_sysmon_view_sysmonitorpseudoview_init",
+      "ui_stealth_views_sysmon_view_sysmonitorpseudoview_init_ui",
+      "ui_stealth_views_sysmon_view_sysmonitorpseudoview_render_view"
+    ],
+    "4": [
+      "core_sonovel_client",
+      "core_sonovel_client_get_css_selector",
+      "core_sonovel_client_get_js_ctx",
+      "core_sonovel_client_get_resource_path",
+      "core_sonovel_client_py_any",
+      "core_sonovel_client_rationale_238",
+      "core_sonovel_client_rationale_78",
+      "core_sonovel_client_sonovelclient",
+      "core_sonovel_client_sonovelclient_apply_js",
+      "core_sonovel_client_sonovelclient_download_chapter",
+      "core_sonovel_client_sonovelclient_extract_text",
+      "core_sonovel_client_sonovelclient_get_toc",
+      "core_sonovel_client_sonovelclient_init",
+      "core_sonovel_client_sonovelclient_invalidate_rule",
+      "core_sonovel_client_sonovelclient_parse_dict_string",
+      "core_sonovel_client_sonovelclient_search",
+      "core_sonovel_client_sonovelclient_search_single_rule",
+      "core_sonovel_client_sonovelclient_select_elements",
+      "core_sonovel_client_sonovelclient_test_rule_connectivity",
+      "event",
+      "session",
+      "ui_bookshelf_window_bookshelfwindow_client",
+      "ui_download_dialog_downloaddialog_init",
+      "ui_download_dialog_downloadworker_init",
+      "ui_download_dialog_searchworker_init"
+    ],
+    "5": [
+      "core_book",
+      "core_book_book",
+      "core_book_book_get_current_chapter",
+      "core_book_book_next_chapter",
+      "core_book_book_prev_chapter",
+      "core_book_book_total_chapters",
+      "core_book_chapter",
+      "core_book_chapter_get_lines",
+      "core_book_chapter_post_init",
+      "core_book_rationale_15",
+      "core_parser",
+      "core_parser_epubparser",
+      "core_parser_epubparser_parse",
+      "core_parser_novelparser",
+      "core_parser_novelparser_load_book",
+      "core_parser_pdfparser",
+      "core_parser_pdfparser_parse",
+      "core_parser_txtparser",
+      "core_parser_txtparser_parse",
+      "utils_encoding",
+      "utils_encoding_detect_file_encoding",
+      "utils_encoding_rationale_4"
+    ],
+    "6": [
+      "ui_bookshelf_window",
+      "ui_bookshelf_window_autoupdateworker",
+      "ui_bookshelf_window_autoupdateworker_init",
+      "ui_bookshelf_window_autoupdateworker_run",
+      "ui_bookshelf_window_autoupdateworker_start",
+      "ui_bookshelf_window_bookshelfwindow_init",
+      "ui_bookshelf_window_bookshelfwindow_init_system_tray",
+      "ui_bookshelf_window_bookshelfwindow_trigger_auto_update_check",
+      "ui_bookshelf_window_downloadworker",
+      "ui_bookshelf_window_downloadworker_cancel",
+      "ui_bookshelf_window_downloadworker_download_chapter_isolated",
+      "ui_bookshelf_window_downloadworker_init",
+      "ui_bookshelf_window_downloadworker_run",
+      "ui_bookshelf_window_downloadworker_start",
+      "ui_bookshelf_window_get_resource_path",
+      "ui_bookshelf_window_py_qobject",
+      "ui_bookshelf_window_rationale_529",
+      "ui_bookshelf_window_searchworker",
+      "ui_bookshelf_window_searchworker_cancel",
+      "ui_bookshelf_window_searchworker_init",
+      "ui_bookshelf_window_searchworker_start"
+    ],
+    "7": [
+      "ui_cad_pseudo_view",
+      "ui_cad_pseudo_view_cadcommandlineedit",
+      "ui_cad_pseudo_view_cadcommandlineedit_init",
+      "ui_cad_pseudo_view_cadcommandlineedit_keypressevent",
+      "ui_cad_pseudo_view_cadcommandlineedit_mousemoveevent",
+      "ui_cad_pseudo_view_cadcommandlineedit_mousepressevent",
+      "ui_cad_pseudo_view_cadcommandlineedit_mousereleaseevent",
+      "ui_cad_pseudo_view_cadcommandlineedit_wheelevent",
+      "ui_cad_pseudo_view_cadpseudoview",
+      "ui_cad_pseudo_view_cadpseudoview_get_line_length",
+      "ui_cad_pseudo_view_cadpseudoview_get_visible_lines_count",
+      "ui_cad_pseudo_view_cadpseudoview_init",
+      "ui_cad_pseudo_view_cadpseudoview_init_ui",
+      "ui_cad_pseudo_view_cadpseudoview_render_view",
+      "ui_cad_pseudo_view_py_qkeyevent",
+      "ui_cad_pseudo_view_py_qmouseevent",
+      "ui_cad_pseudo_view_py_qtextedit",
+      "ui_cad_pseudo_view_py_qwheelevent"
+    ],
+    "8": [
+      "ui_ide_pseudo_view",
+      "ui_ide_pseudo_view_idepseudoview",
+      "ui_ide_pseudo_view_idepseudoview_get_line_length",
+      "ui_ide_pseudo_view_idepseudoview_get_visible_lines_count",
+      "ui_ide_pseudo_view_idepseudoview_init",
+      "ui_ide_pseudo_view_idepseudoview_init_ui",
+      "ui_ide_pseudo_view_idepseudoview_render_view",
+      "ui_ide_pseudo_view_logtextedit",
+      "ui_ide_pseudo_view_logtextedit_init",
+      "ui_ide_pseudo_view_logtextedit_keypressevent",
+      "ui_ide_pseudo_view_logtextedit_mousemoveevent",
+      "ui_ide_pseudo_view_logtextedit_mousepressevent",
+      "ui_ide_pseudo_view_logtextedit_mousereleaseevent",
+      "ui_ide_pseudo_view_logtextedit_wheelevent",
+      "ui_ide_pseudo_view_py_qkeyevent",
+      "ui_ide_pseudo_view_py_qmouseevent",
+      "ui_ide_pseudo_view_py_qtextedit",
+      "ui_ide_pseudo_view_py_qwheelevent"
+    ],
+    "9": [
+      "qmainwindow",
+      "ui_bookshelf_window_bookshelfwindow",
+      "ui_bookshelf_window_bookshelfwindow_changeevent",
+      "ui_bookshelf_window_bookshelfwindow_dragenterevent",
+      "ui_bookshelf_window_bookshelfwindow_on_reading_progress_updated",
+      "ui_bookshelf_window_bookshelfwindow_on_search_error",
+      "ui_bookshelf_window_bookshelfwindow_on_search_finished",
+      "ui_bookshelf_window_bookshelfwindow_on_search_item_found",
+      "ui_bookshelf_window_bookshelfwindow_on_search_status",
+      "ui_bookshelf_window_bookshelfwindow_on_task_progress",
+      "ui_bookshelf_window_bookshelfwindow_on_tray_icon_activated",
+      "ui_bookshelf_window_bookshelfwindow_save_settings_tab",
+      "ui_bookshelf_window_bookshelfwindow_setup_results_view",
+      "ui_bookshelf_window_bookshelfwindow_show_main_window",
+      "ui_bookshelf_window_bookshelfwindow_toggle_all_reading_windows",
+      "ui_bookshelf_window_py_qdragenterevent",
+      "ui_bookshelf_window_rationale_1127"
+    ],
+    "10": [
+      "core_db_manager",
+      "core_db_manager_databasemanager",
+      "core_db_manager_databasemanager_add_or_update_task",
+      "core_db_manager_databasemanager_delete_task",
+      "core_db_manager_databasemanager_get_all_tasks",
+      "core_db_manager_databasemanager_get_connection",
+      "core_db_manager_databasemanager_init",
+      "core_db_manager_databasemanager_init_db",
+      "core_db_manager_databasemanager_set_auto_update",
+      "core_db_manager_databasemanager_update_task_progress",
+      "core_db_manager_databasemanager_update_task_status",
+      "core_db_manager_py_any",
+      "core_db_manager_rationale_17"
+    ],
+    "11": [
+      "ui_bookshelf_window_bookshelfwindow_copy_file_to_downloads",
+      "ui_bookshelf_window_bookshelfwindow_do_import_local_book",
+      "ui_bookshelf_window_bookshelfwindow_dropevent",
+      "ui_bookshelf_window_bookshelfwindow_on_shelf_item_double_clicked",
+      "ui_bookshelf_window_bookshelfwindow_on_task_finished",
+      "ui_bookshelf_window_bookshelfwindow_refresh_bookshelf",
+      "ui_bookshelf_window_bookshelfwindow_remove_book",
+      "ui_bookshelf_window_bookshelfwindow_start_reading",
+      "ui_bookshelf_window_py_qdropevent",
+      "ui_bookshelf_window_rationale_1149",
+      "ui_bookshelf_window_rationale_1177"
+    ],
+    "12": [
+      "ui_bookshelf_window_autoupdateworker_cancel",
+      "ui_bookshelf_window_bookshelfwindow_cancel_download_task",
+      "ui_bookshelf_window_bookshelfwindow_cancel_search",
+      "ui_bookshelf_window_bookshelfwindow_do_add_download_task",
+      "ui_bookshelf_window_bookshelfwindow_load_download_tasks_from_db",
+      "ui_bookshelf_window_bookshelfwindow_on_task_cancelled",
+      "ui_bookshelf_window_bookshelfwindow_on_task_error",
+      "ui_bookshelf_window_bookshelfwindow_remove_download_task",
+      "ui_bookshelf_window_bookshelfwindow_retry_download_task",
+      "ui_bookshelf_window_rationale_552"
+    ],
+    "13": [
+      "qtablewidget",
+      "qwidget",
+      "ui_bookshelf_window_bookshelfwindow_init_tab_bookshelf",
+      "ui_bookshelf_window_bookshelfwindow_init_tab_bookstore",
+      "ui_bookshelf_window_bookshelfwindow_init_tab_downloads",
+      "ui_bookshelf_window_bookshelfwindow_init_tab_settings",
+      "ui_bookshelf_window_bookshelfwindow_init_ui",
+      "ui_bookshelf_window_bookshelfwindow_on_tab_changed",
+      "ui_download_dialog_downloaddialog_init_ui"
+    ],
+    "14": [
+      "ui_chapter_dialog",
+      "ui_chapter_dialog_chapterdialog",
+      "ui_chapter_dialog_chapterdialog_accept_selection",
+      "ui_chapter_dialog_chapterdialog_do_filter",
+      "ui_chapter_dialog_chapterdialog_init",
+      "ui_chapter_dialog_chapterdialog_init_ui",
+      "ui_chapter_dialog_chapterdialog_on_item_double_clicked",
+      "ui_chapter_dialog_chapterdialog_on_search_changed",
+      "ui_chapter_dialog_py_qdialog"
+    ],
+    "15": [
+      "ui_floating_view",
+      "ui_floating_view_floatingview",
+      "ui_floating_view_floatingview_init",
+      "ui_floating_view_floatingview_init_ui",
+      "ui_floating_view_floatingview_on_auto_scroll_timeout",
+      "ui_floating_view_floatingview_paintevent",
+      "ui_floating_view_floatingview_recalculate_lines",
+      "ui_floating_view_floatingview_render_view"
+    ],
+    "16": [
+      "ui_stealth_views_common_forwardtablewidget_mousemoveevent",
+      "ui_stealth_views_common_forwardtablewidget_mousepressevent",
+      "ui_stealth_views_common_forwardtablewidget_mousereleaseevent",
+      "ui_stealth_views_common_forwardtextedit_mousemoveevent",
+      "ui_stealth_views_common_forwardtextedit_mousepressevent",
+      "ui_stealth_views_common_forwardtextedit_mousereleaseevent",
+      "ui_stealth_views_common_py_qmouseevent"
+    ],
+    "17": [
+      "ui_stealth_views_common_forwardtextedit",
+      "ui_stealth_views_common_py_qtextedit",
+      "ui_stealth_views_terminal_view",
+      "ui_stealth_views_terminal_view_terminalpseudoview",
+      "ui_stealth_views_terminal_view_terminalpseudoview_init",
+      "ui_stealth_views_terminal_view_terminalpseudoview_init_ui",
+      "ui_stealth_views_terminal_view_terminalpseudoview_render_view"
+    ],
+    "18": [
+      "ui_settings_dialog",
+      "ui_settings_dialog_py_qdialog",
+      "ui_settings_dialog_settingsdialog",
+      "ui_settings_dialog_settingsdialog_init",
+      "ui_settings_dialog_settingsdialog_init_ui",
+      "ui_settings_dialog_settingsdialog_save_settings"
+    ],
+    "19": [
+      "ui_bookshelf_window_bookshelfwindow_closeevent",
+      "ui_bookshelf_window_bookshelfwindow_force_quit_app",
+      "ui_bookshelf_window_bookshelfwindow_quit_application",
+      "ui_bookshelf_window_rationale_1617",
+      "ui_bookshelf_window_rationale_1650"
+    ],
+    "20": [
+      "ui_bookshelf_window_bookshelfwindow_do_search",
+      "ui_bookshelf_window_bookshelfwindow_on_rule_tested",
+      "ui_bookshelf_window_bookshelfwindow_refresh_connectivity_table",
+      "ui_bookshelf_window_bookshelfwindow_setup_connectivity_view",
+      "ui_bookshelf_window_searchworker_run"
+    ],
+    "21": [
+      "ui_stealth_views_calc_view",
+      "ui_stealth_views_calc_view_calculatorpseudoview",
+      "ui_stealth_views_calc_view_calculatorpseudoview_init",
+      "ui_stealth_views_calc_view_calculatorpseudoview_init_ui",
+      "ui_stealth_views_calc_view_calculatorpseudoview_render_view"
+    ],
+    "22": [
+      "ui_stealth_views_deepl_view",
+      "ui_stealth_views_deepl_view_deepltranslatepseudoview",
+      "ui_stealth_views_deepl_view_deepltranslatepseudoview_init",
+      "ui_stealth_views_deepl_view_deepltranslatepseudoview_init_ui",
+      "ui_stealth_views_deepl_view_deepltranslatepseudoview_render_view"
+    ],
+    "23": [
+      "ui_stealth_views_devtools_view",
+      "ui_stealth_views_devtools_view_devtoolspseudoview",
+      "ui_stealth_views_devtools_view_devtoolspseudoview_init",
+      "ui_stealth_views_devtools_view_devtoolspseudoview_init_ui",
+      "ui_stealth_views_devtools_view_devtoolspseudoview_render_view"
+    ],
+    "24": [
+      "ui_stealth_views_git_diff_view",
+      "ui_stealth_views_git_diff_view_gitdiffpseudoview",
+      "ui_stealth_views_git_diff_view_gitdiffpseudoview_init",
+      "ui_stealth_views_git_diff_view_gitdiffpseudoview_init_ui",
+      "ui_stealth_views_git_diff_view_gitdiffpseudoview_render_view"
+    ],
+    "25": [
+      "ui_stealth_views_jenkins_view",
+      "ui_stealth_views_jenkins_view_jenkinscipseudoview",
+      "ui_stealth_views_jenkins_view_jenkinscipseudoview_init",
+      "ui_stealth_views_jenkins_view_jenkinscipseudoview_init_ui",
+      "ui_stealth_views_jenkins_view_jenkinscipseudoview_render_view"
+    ],
+    "26": [
+      "ui_stealth_views_json_view",
+      "ui_stealth_views_json_view_jsonvalidatorpseudoview",
+      "ui_stealth_views_json_view_jsonvalidatorpseudoview_init",
+      "ui_stealth_views_json_view_jsonvalidatorpseudoview_init_ui",
+      "ui_stealth_views_json_view_jsonvalidatorpseudoview_render_view"
+    ],
+    "27": [
+      "ui_stealth_views_jupyter_view",
+      "ui_stealth_views_jupyter_view_jupyterpseudoview",
+      "ui_stealth_views_jupyter_view_jupyterpseudoview_init",
+      "ui_stealth_views_jupyter_view_jupyterpseudoview_init_ui",
+      "ui_stealth_views_jupyter_view_jupyterpseudoview_render_view"
+    ],
+    "28": [
+      "ui_stealth_views_logcat_view",
+      "ui_stealth_views_logcat_view_logcatpseudoview",
+      "ui_stealth_views_logcat_view_logcatpseudoview_init",
+      "ui_stealth_views_logcat_view_logcatpseudoview_init_ui",
+      "ui_stealth_views_logcat_view_logcatpseudoview_render_view"
+    ],
+    "29": [
+      "ui_stealth_views_markdown_view",
+      "ui_stealth_views_markdown_view_markdowneditorpseudoview",
+      "ui_stealth_views_markdown_view_markdowneditorpseudoview_init",
+      "ui_stealth_views_markdown_view_markdowneditorpseudoview_init_ui",
+      "ui_stealth_views_markdown_view_markdowneditorpseudoview_render_view"
+    ],
+    "30": [
+      "ui_stealth_views_notion_view",
+      "ui_stealth_views_notion_view_notionpseudoview",
+      "ui_stealth_views_notion_view_notionpseudoview_init",
+      "ui_stealth_views_notion_view_notionpseudoview_init_ui",
+      "ui_stealth_views_notion_view_notionpseudoview_render_view"
+    ],
+    "31": [
+      "ui_stealth_views_outlook_view",
+      "ui_stealth_views_outlook_view_outlookpseudoview",
+      "ui_stealth_views_outlook_view_outlookpseudoview_init",
+      "ui_stealth_views_outlook_view_outlookpseudoview_init_ui",
+      "ui_stealth_views_outlook_view_outlookpseudoview_render_view"
+    ],
+    "32": [
+      "ui_stealth_views_pdf_view",
+      "ui_stealth_views_pdf_view_pdfreaderpseudoview",
+      "ui_stealth_views_pdf_view_pdfreaderpseudoview_init",
+      "ui_stealth_views_pdf_view_pdfreaderpseudoview_init_ui",
+      "ui_stealth_views_pdf_view_pdfreaderpseudoview_render_view"
+    ],
+    "33": [
+      "ui_stealth_views_swagger_view",
+      "ui_stealth_views_swagger_view_swaggerpseudoview",
+      "ui_stealth_views_swagger_view_swaggerpseudoview_init",
+      "ui_stealth_views_swagger_view_swaggerpseudoview_init_ui",
+      "ui_stealth_views_swagger_view_swaggerpseudoview_render_view"
+    ],
+    "34": [
+      "ui_stealth_views_teams_view",
+      "ui_stealth_views_teams_view_chatteamspseudoview",
+      "ui_stealth_views_teams_view_chatteamspseudoview_init",
+      "ui_stealth_views_teams_view_chatteamspseudoview_init_ui",
+      "ui_stealth_views_teams_view_chatteamspseudoview_render_view"
+    ],
+    "35": [
+      "ui_stealth_views_word_view",
+      "ui_stealth_views_word_view_wordpseudoview",
+      "ui_stealth_views_word_view_wordpseudoview_init",
+      "ui_stealth_views_word_view_wordpseudoview_init_ui",
+      "ui_stealth_views_word_view_wordpseudoview_render_view"
+    ],
+    "36": [
+      "core_version",
+      "core_version_rationale_1"
+    ],
+    "37": [
+      "core_init"
+    ],
+    "38": [
+      "init"
+    ],
+    "39": [
+      "ui_init"
+    ],
+    "40": [
+      "ui_stealth_views_init"
+    ],
+    "41": [
+      "utils_init"
+    ]
+  },
+  "cohesion": {
+    "0": 0.07767722473604827,
+    "1": 0.09243697478991597,
+    "2": 0.08333333333333333,
+    "3": 0.08735632183908046,
+    "4": 0.13333333333333333,
+    "5": 0.16883116883116883,
+    "6": 0.14285714285714285,
+    "7": 0.1503267973856209,
+    "8": 0.1503267973856209,
+    "9": 0.13970588235294118,
+    "10": 0.2692307692307692,
+    "11": 0.2,
+    "12": 0.24444444444444444,
+    "13": 0.3888888888888889,
+    "14": 0.25,
+    "15": 0.32142857142857145,
+    "16": 0.42857142857142855,
+    "17": 0.38095238095238093,
+    "18": 0.4,
+    "19": 0.4,
+    "20": 0.4,
+    "21": 0.5,
+    "22": 0.5,
+    "23": 0.5,
+    "24": 0.5,
+    "25": 0.5,
+    "26": 0.5,
+    "27": 0.5,
+    "28": 0.5,
+    "29": 0.5,
+    "30": 0.5,
+    "31": 0.5,
+    "32": 0.5,
+    "33": 0.5,
+    "34": 0.5,
+    "35": 0.5,
+    "36": 1.0,
+    "37": 1.0,
+    "38": 1.0,
+    "39": 1.0,
+    "40": 1.0,
+    "41": 1.0
+  },
+  "gods": [
+    {
+      "id": "ui_base_window_basestealthwindow",
+      "label": "BaseStealthWindow",
+      "degree": 71
+    },
+    {
+      "id": "ui_bookshelf_window_bookshelfwindow",
+      "label": "BookshelfWindow",
+      "degree": 56
+    },
+    {
+      "id": "ui_stealth_views_common_forwardtextedit",
+      "label": "ForwardTextEdit",
+      "degree": 40
+    },
+    {
+      "id": "core_sonovel_client_sonovelclient",
+      "label": "SoNovelClient",
+      "degree": 26
+    },
+    {
+      "id": "ui_download_dialog_downloaddialog",
+      "label": "DownloadDialog",
+      "degree": 24
+    },
+    {
+      "id": "core_config_configmanager",
+      "label": "ConfigManager",
+      "degree": 19
+    },
+    {
+      "id": "core_db_manager_databasemanager",
+      "label": "DatabaseManager",
+      "degree": 17
+    },
+    {
+      "id": "ui_stealth_views_common_forwardtablewidget",
+      "label": "ForwardTableWidget",
+      "degree": 16
+    },
+    {
+      "id": "ui_bookshelf_window_downloadworker",
+      "label": "DownloadWorker",
+      "degree": 15
+    },
+    {
+      "id": "core_book_book",
+      "label": "Book",
+      "degree": 14
+    }
+  ],
+  "surprises": [
+    {
+      "source": "BaseStealthWindow",
+      "target": "Book",
+      "source_files": [
+        "ui/base_window.py",
+        "core/book.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "AutoUpdateWorker",
+      "target": "ConfigManager",
+      "source_files": [
+        "ui/bookshelf_window.py",
+        "core/config.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "BookshelfWindow",
+      "target": "ConfigManager",
+      "source_files": [
+        "ui/bookshelf_window.py",
+        "core/config.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "DownloadWorker",
+      "target": "ConfigManager",
+      "source_files": [
+        "ui/bookshelf_window.py",
+        "core/config.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "SearchWorker",
+      "target": "ConfigManager",
+      "source_files": [
+        "ui/bookshelf_window.py",
+        "core/config.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    }
+  ],
+  "tokens": {
+    "input": 0,
+    "output": 0
+  }
+}

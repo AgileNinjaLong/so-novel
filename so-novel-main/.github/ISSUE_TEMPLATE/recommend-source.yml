@@ -1,0 +1,68 @@
+name: 推荐书源
+description: 我希望增加某个书源
+title: '[推荐书源] 此处填写书源网址（示例：[推荐书源] https://example.com/）'
+labels:
+  - "new source"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 先决条件
+        **为避免重复推荐，请先查看：[书源一览](https://github.com/freeok/so-novel/blob/main/BOOK_SOURCES.md)、[已推荐书源](https://github.com/freeok/so-novel/issues?q=label%3A%22new%20source%22)**
+        如果您推荐的书源能够搜到已知书源均搜不到的书名，哪怕只有一本，强烈欢迎推荐！！
+
+  - type: markdown
+    attributes:
+      value: |
+        > [!Tip]
+        > 仅接收同时满足以下条件的书源
+        > 1. 非正版平台
+        > 2. 无 [Cloudflare 真人验证](https://linux.do/uploads/default/original/4X/f/a/7/fa7c61ef299cdb295605d06b486a7a1a852e5335.png) (优质书源除外)
+        > 3. 支持搜索 (优质书源除外)
+        > 4. 大陆 IP 可访问 (优质书源除外)
+
+  - type: checkboxes
+    attributes:
+      label: 确定推荐的书源均满足以上条件？
+      options:
+        - label: "Yes"
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## 填写内容
+
+  - type: input
+    attributes:
+      label: 书源网址
+      placeholder: https://example.com/
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: 书源类型
+      options:
+        - 网络小说
+        - 轻小说
+        - 综合
+        - 其它（需在推荐理由填写具体类型）
+    validations:
+      required: true
+
+  - type: checkboxes
+    attributes:
+      label: 勾选满足的条件，不确定的不勾选
+      options:
+        - label: 能搜到[新书](https://www.qidian.com/rank/yuepiao/)
+        - label: 能搜到[知名小说](https://www.qidian.com/rank/collect/)
+        - label: 错别字少
+        - label: 排版正常
+        - label: 内容纯净（没有与文章无关的内容）
+
+  - type: textarea
+    attributes:
+      label: 推荐理由
+    validations:
+      required: true
