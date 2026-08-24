@@ -214,23 +214,6 @@ class DownloadWorker(QObject):
                 self.cancelled_signal.emit(self.task_id)
                 return
 
-            # 补漏下载（针对首次因反爬限流失败的章节，按 SoNovel 规范进行指数退避重试）
-            failed_indices = [i for i, c in enumerate(chapter_contents) if not c or "下载失败" in c or "解析失败" in c]
-            if failed_indices and not self.cancel_event.is_set():
-                self.progress_signal.emit(self.task_id, total, total, f"正在退避补全 {len(failed_indices)} 个限流章节...")
-                for idx in failed_indices:
-                    if self.cancel_event.is_set():
-                        self.cancelled_signal.emit(self.task_id)
-                        return
-                    chap = toc[idx]
-                    try:
-                        time.sleep(random.uniform(1.5, 3.0)) # 退避重试延时
-                        res = self.client.download_chapter(chap["url"], rule, session=self.session, cancel_event=self.cancel_event, min_interval=min_interval, max_interval=max_interval, chap_title=chap["title"])
-                        if "下载失败" not in res and "解析失败" not in res:
-                            chapter_contents[idx] = res
-                    except Exception:
-                        pass
-
             self.progress_signal.emit(self.task_id, total, total, "下载完毕，合成落盘中...")
 
             # 合成落盘

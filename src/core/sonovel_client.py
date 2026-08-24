@@ -39,6 +39,32 @@ def _get_js_ctx():
         _js_local.ctx = MiniRacer()
     return _js_local.ctx
 
+_DESKTOP_OS = [
+    "Windows NT 10.0; Win64; x64",
+    "Windows NT 11.0; Win64; x64",
+    "Macintosh; Intel Mac OS X 10_15_7",
+    "X11; Linux x86_64",
+    "X11; Ubuntu; Linux x86_64"
+]
+
+def generate_random_ua() -> str:
+    """100% 对齐 so-novel-main RandomUA.java 生成动态伪装请求头"""
+    import random
+    os_str = random.choice(_DESKTOP_OS)
+    browser = random.choice(["Chrome", "Firefox", "Edge", "Safari"])
+    major = random.randint(115, 130)
+    minor = random.randint(0, 9)
+    build = random.randint(100, 999)
+    
+    if browser == "Chrome":
+        return f"Mozilla/5.0 ({os_str}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.{build}.{minor} Safari/537.36"
+    elif browser == "Firefox":
+        return f"Mozilla/5.0 ({os_str}; rv:{major}.0) Gecko/20100101 Firefox/{major}.0"
+    elif browser == "Safari":
+        return f"Mozilla/5.0 ({os_str}) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+    else:
+        return f"Mozilla/5.0 ({os_str}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.{build}.{minor} Safari/537.36 Edg/{major}.0.{build}.{minor}"
+
 class SoNovelClient:
     def __init__(self, rules_dir: str = RULES_DIR):
         self.rules = []
@@ -605,6 +631,8 @@ class SoNovelClient:
         return unique_chapters
 
     def download_chapter(self, chapter_url: str, rule: dict, session=None, cancel_event=None, min_interval: float = 0.2, max_interval: float = 0.4, chap_title: str = "") -> str:
+        import random
+        from lxml import html
         chap_rule = rule.get("chapter", {})
         ignore_ssl = rule.get("ignoreSsl", False)
         content_parts = []
@@ -619,20 +647,41 @@ class SoNovelClient:
             visited.add(current_url)
             resp = None
             parsed = urllib.parse.urlparse(current_url)
-            req_headers = dict(req_session.headers)
-            req_headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
-            req_headers["Host"] = parsed.netloc
+            
+            # 【100% 对齐 so-novel-main CrawlUtils.java】动态注入真实浏览器随机 UA 与防爬头
+            req_headers = {
+                "User-Agent": generate_random_ua(),
+                "Referer": f"{parsed.scheme}://{parsed.netloc}/",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"',
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1"
+            }
 
-            for attempt in range(3):
+            # 【对齐 so-novel-main ChapterParser.java】单线程原生就地重试机制，避免失败流入后备退避
+            for attempt in range(1, 4):
                 if cancel_event and cancel_event.is_set():
                     break
                 try:
-                    resp = req_session.get(current_url, headers=req_headers, timeout=(4.0, 8.0), verify=not ignore_ssl)
+                    # 每次重试间隔递增
+                    if attempt > 1:
+                        time.sleep(random.uniform(0.8, 1.8) * attempt)
+                    elif max_interval > 0:
+                        time.sleep(random.uniform(min_interval, max_interval))
+
+                    resp = req_session.get(current_url, headers=req_headers, timeout=(5.0, 10.0), verify=not ignore_ssl)
                     if resp.status_code == 200:
                         break
+                    elif resp.status_code in (429, 502, 503, 504, 403):
+                        # 触发反爬限流时，更新 UA 继续就地重试
+                        req_headers["User-Agent"] = generate_random_ua()
                 except Exception:
-                    if attempt < 2:
-                        time.sleep(random.uniform(1.0, 2.5))
+                    req_headers["User-Agent"] = generate_random_ua()
 
             if not resp or resp.status_code != 200:
                 return "(本章下载失败)"
