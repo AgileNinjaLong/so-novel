@@ -961,7 +961,13 @@ class BookshelfWindow(QMainWindow):
     def init_tab_settings(self):
         layout = QVBoxLayout(self.tab_settings)
 
-        # ====== 新增: 摸鱼模式样式独立设置 ======
+        self.settings_subtabs = QTabWidget()
+        layout.addWidget(self.settings_subtabs)
+
+        # ====== SubTab 1: 外观样式 ======
+        tab_appearance = QWidget()
+        layout_appearance = QVBoxLayout(tab_appearance)
+
         group_style = QGroupBox("🎨 外观样式独立配置 (即时生效)")
         form_style = QFormLayout(group_style)
         
@@ -995,7 +1001,7 @@ class BookshelfWindow(QMainWindow):
         def _on_font_size_changed(val):
             mode_key = self.style_mode_combo.currentData()
             self.config_manager.set_mode_style(mode_key, "font_size", val)
-            self._notify_style_changed(mode_key)
+            _notify_style_changed(mode_key)
 
         def _pick_color():
             from PyQt6.QtWidgets import QColorDialog
@@ -1005,7 +1011,7 @@ class BookshelfWindow(QMainWindow):
                 self.font_color_btn.setStyleSheet(f"background-color: {self.current_font_color}; color: {'#000' if self.current_font_color.upper() == '#FFFFFF' else '#FFF'};")
                 mode_key = self.style_mode_combo.currentData()
                 self.config_manager.set_mode_style(mode_key, "font_color", self.current_font_color)
-                self._notify_style_changed(mode_key)
+                _notify_style_changed(mode_key)
 
         self.font_color_btn.clicked.connect(_pick_color)
         self.font_size_spin.valueChanged.connect(_on_font_size_changed)
@@ -1014,7 +1020,10 @@ class BookshelfWindow(QMainWindow):
         form_style.addRow("🎯 选择需配置的模式:", self.style_mode_combo)
         form_style.addRow("🔠 独立字体大小:", self.font_size_spin)
         form_style.addRow("🎨 独立字体颜色:", self.font_color_btn)
-        layout.addWidget(group_style)
+        layout_appearance.addWidget(group_style)
+        layout_appearance.addStretch()
+        
+        self.settings_subtabs.addTab(tab_appearance, "🎨 外观样式")
 
         # 初始化加载当前选中的模式样式
         _on_mode_changed(0)
@@ -1026,7 +1035,9 @@ class BookshelfWindow(QMainWindow):
                         win.apply_mode_style()
                     win.update_content()
 
-        # ========================================
+        # ====== SubTab 2: 快捷键绑定 ======
+        tab_hotkeys = QWidget()
+        layout_hotkeys = QVBoxLayout(tab_hotkeys)
 
         group_mode = QGroupBox("摸鱼伪装模式与快捷键绑定 (全套 21 种伪装模式)")
         mode_layout = QVBoxLayout(group_mode)
@@ -1052,7 +1063,13 @@ class BookshelfWindow(QMainWindow):
 
         scroll_area.setWidget(scroll_widget)
         mode_layout.addWidget(scroll_area)
-        layout.addWidget(group_mode)
+        layout_hotkeys.addWidget(group_mode)
+        
+        self.settings_subtabs.addTab(tab_hotkeys, "⌨️ 快捷键绑定")
+
+        # ====== SubTab 3: 阅读与滚动 ======
+        tab_reading = QWidget()
+        layout_reading = QVBoxLayout(tab_reading)
 
         group_read = QGroupBox("阅读控制与自动滚动")
         form_read = QFormLayout()
@@ -1082,8 +1099,12 @@ class BookshelfWindow(QMainWindow):
         form_read.addRow("▶️ 开启/暂停自动翻页:", self.hk_toggle_auto)
         form_read.addRow("⏱️ 自动连续滚动速度:", self.auto_speed_spin)
         group_read.setLayout(form_read)
-        layout.addWidget(group_read)
+        layout_reading.addWidget(group_read)
+        layout_reading.addStretch()
 
+        self.settings_subtabs.addTab(tab_reading, "📖 阅读与滚动")
+
+        # ====== 保存按钮 ======
         save_btn = QPushButton("💾 保存系统设置")
         save_btn.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px;")
         save_btn.clicked.connect(self.save_settings_tab)
