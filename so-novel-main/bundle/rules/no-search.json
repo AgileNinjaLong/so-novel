@@ -48,7 +48,7 @@
       "content": "div.content",
       "paragraphTagClosed": true,
       "filterTxt": "\\(本章完\\)",
-      "filterTag": "a, center, div"
+      "filterTag": "a, center, script, style"
     }
   },
   {
