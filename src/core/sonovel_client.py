@@ -25,19 +25,15 @@ RULES_DIR = get_resource_path(_so_novel_rules_path)
 if not os.path.exists(RULES_DIR):
     RULES_DIR = get_resource_path(_dev_rules_path)
 
-_js_local = threading.local()
-
-def _get_css_selector(selector: str):
-    if selector not in _css_cache:
-        from lxml.cssselect import CSSSelector
-        _css_cache[selector] = CSSSelector(selector)
-    return _css_cache[selector]
+_js_lock = threading.Lock()
+_js_ctx = None
 
 def _get_js_ctx():
-    if not hasattr(_js_local, 'ctx'):
+    global _js_ctx
+    if _js_ctx is None:
         from py_mini_racer import MiniRacer
-        _js_local.ctx = MiniRacer()
-    return _js_local.ctx
+        _js_ctx = MiniRacer()
+    return _js_ctx
 
 _DESKTOP_OS = [
     "Windows NT 10.0; Win64; x64",
@@ -109,13 +105,25 @@ class SoNovelClient:
             self.connectivity_cache["valid_rule_indices"].remove(rule_index)
 
     def _parse_dict_string(self, data_str: str, keyword: str = "") -> dict:
+        """100% 对齐 so-novel-main CrawlUtils.buildData 解析 json5 格式的 search.data"""
         if not data_str or data_str == "{}":
             return {}
-        data_str = data_str.strip("{}")
+        data_str = data_str.strip()
+        if data_str.startswith("{") and data_str.endswith("}"):
+            data_str = data_str[1:-1].strip()
+            
         payload = {}
+        # 兼容 key: value, key2: value2
         for pair in data_str.split(','):
             if ':' in pair:
                 k, v = pair.split(':', 1)
+                k = k.strip().strip("'\"")
+                v = v.strip().strip("'\"")
+                if "%s" in v:
+                    v = v.replace('%s', keyword)
+                payload[k] = v
+            elif '=' in pair:
+                k, v = pair.split('=', 1)
                 k = k.strip()
                 v = v.strip().replace('%s', keyword)
                 payload[k] = v
@@ -545,14 +553,28 @@ class SoNovelClient:
             session = self.session
 
         toc_rule = rule.get("toc", {})
+        book_rule = rule.get("book", {})
         chapters = []
 
         toc_url = toc_rule.get("url", "")
         if toc_url and '%s' in toc_url:
-            path = urllib.parse.urlparse(book_url).path
-            m = re.findall(r'\d+', path)
-            if m:
-                toc_url = toc_url.replace('%s', m[-1])
+            # 【100% 对齐 so-novel-main TocParser.java 正则提取小说主键 ID】
+            book_pattern = book_rule.get("url", "").split("@js:")[0]
+            novel_id = None
+            if book_pattern:
+                try:
+                    m = re.search(book_pattern, book_url)
+                    if m and m.groups():
+                        novel_id = m.group(1)
+                except Exception:
+                    pass
+            if not novel_id:
+                path = urllib.parse.urlparse(book_url).path
+                m = re.findall(r'\d+', path)
+                novel_id = m[-1] if m else ""
+
+            if novel_id:
+                toc_url = toc_url.replace('%s', novel_id)
             else:
                 toc_url = book_url
         else:
@@ -603,15 +625,30 @@ class SoNovelClient:
                             full_link = urllib.parse.urljoin(base_uri, link)
                             chapters.append({"title": title, "url": full_link})
                 
-                # 目录翻页 (补全相对路径 urljoin 拼接，防止跨页书源遗漏后半段章节)
+                # 目录翻页 (对齐 so-novel-main TocParser.java extractPaginationUrls)
                 next_page_rule = toc_rule.get("nextPage", "")
                 if next_page_rule:
-                    next_url = self._extract_text(tree, next_page_rule, resp.url)
-                    if next_url and not next_url.startswith("http"):
-                        next_url = urllib.parse.urljoin(resp.url, next_url)
-                    if next_url and next_url != current_url and next_url.startswith("http"):
-                        current_url = next_url
+                    page_elements = self._select_elements(tree, next_page_rule)
+                    # 如果是下拉选择框 option，一次性提取所有分页 URL
+                    if page_elements and len(page_elements) > 1 and hasattr(page_elements[0], 'get'):
+                        for p_el in page_elements:
+                            p_val = p_el.get("value", "") or p_el.get("href", "")
+                            if p_val:
+                                p_url = urllib.parse.urljoin(resp.url, p_val)
+                                if p_url not in visited:
+                                    current_url = p_url
+                                    # 继续下一轮循环抓取该页目录
+                                    break
+                        else:
+                            break
                         continue
+                    else:
+                        next_url = self._extract_text(tree, next_page_rule, resp.url)
+                        if next_url and not next_url.startswith("http"):
+                            next_url = urllib.parse.urljoin(resp.url, next_url)
+                        if next_url and next_url != current_url and next_url.startswith("http"):
+                            current_url = next_url
+                            continue
                 break
             except Exception:
                 break
