@@ -8,6 +8,9 @@ class ForwardTextEdit(QTextEdit):
         super().__init__(*args, **kwargs)
         self.parent_view = parent_view
         self.setReadOnly(True)
+        self.setMouseTracking(True)
+        if self.viewport():
+            self.viewport().setMouseTracking(True)
 
     def wheelEvent(self, event: QWheelEvent):
         if self.parent_view:
@@ -72,6 +75,9 @@ class ForwardTableWidget(QTableWidget):
         super().__init__(*args, **kwargs)
         self.parent_view = parent_view
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.setMouseTracking(True)
+        if self.viewport():
+            self.viewport().setMouseTracking(True)
 
     def wheelEvent(self, event: QWheelEvent):
         if self.parent_view:

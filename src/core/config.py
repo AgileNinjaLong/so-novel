@@ -50,6 +50,21 @@ class ConfigManager(QObject):
         self._save_timer.timeout.connect(self.save)
         
         self.load()
+        if "stealth_profiles" not in self.settings:
+            self.settings["stealth_profiles"] = {}
+
+    def get_mode_style(self, mode_name: str, key: str, default_val: Any = None) -> Any:
+        profiles = self.settings.get("stealth_profiles", {})
+        mode_profile = profiles.get(mode_name, {})
+        if key in mode_profile:
+            return mode_profile[key]
+        return self.settings.get(key, default_val)
+
+    def set_mode_style(self, mode_name: str, key: str, val: Any):
+        profiles = self.settings.setdefault("stealth_profiles", {})
+        mode_profile = profiles.setdefault(mode_name, {})
+        mode_profile[key] = val
+        self._save_timer.start()
 
     def get_bookshelf(self) -> Dict[str, Dict[str, Any]]:
         if "bookshelf" not in self.settings or not isinstance(self.settings["bookshelf"], dict):

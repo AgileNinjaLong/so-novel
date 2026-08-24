@@ -961,6 +961,83 @@ class BookshelfWindow(QMainWindow):
     def init_tab_settings(self):
         layout = QVBoxLayout(self.tab_settings)
 
+        # ====== 新增: 摸鱼模式样式独立设置 ======
+        group_style = QGroupBox("🎨 外观样式独立配置 (即时生效)")
+        form_style = QFormLayout(group_style)
+        
+        self.style_mode_combo = QComboBox()
+        for m_key, m_name, _, _ in ALL_STEALTH_MODES:
+            self.style_mode_combo.addItem(m_name, m_key)
+            
+        self.font_size_spin = QDoubleSpinBox()
+        self.font_size_spin.setRange(8, 72)
+        self.font_size_spin.setDecimals(1)
+        self.font_size_spin.setSuffix(" pt")
+        
+        self.font_color_btn = QPushButton("选择字体颜色")
+        self.font_color_btn.setStyleSheet("background-color: #333333; color: white;")
+        self.current_font_color = "#FFFFFF"
+
+        def _on_mode_changed(idx):
+            mode_key = self.style_mode_combo.itemData(idx)
+            f_size = self.config_manager.get_mode_style(mode_key, "font_size", 12)
+            f_color = self.config_manager.get_mode_style(mode_key, "font_color", "")
+            if not f_color:
+                # 默认回退逻辑，如果在对应 view 未显式声明，给个基础默认
+                f_color = "#FFFFFF" if mode_key == "ide_pseudo" else "#333333"
+            
+            self.font_size_spin.blockSignals(True)
+            self.font_size_spin.setValue(f_size)
+            self.font_size_spin.blockSignals(False)
+            
+            self.current_font_color = f_color
+            self.font_color_btn.setStyleSheet(f"background-color: {f_color}; color: {'#000' if f_color.upper() == '#FFFFFF' else '#FFF'};")
+
+        def _pick_color():
+            from PyQt6.QtWidgets import QColorDialog
+            color = QColorDialog.getColor(QColor(self.current_font_color), self, "选择字体颜色")
+            if color.isValid():
+                self.current_font_color = color.name()
+                self.font_color_btn.setStyleSheet(f"background-color: {self.current_font_color}; color: {'#000' if self.current_font_color.upper() == '#FFFFFF' else '#FFF'};")
+                mode_key = self.style_mode_combo.currentData()
+                self.config_manager.set_mode_style(mode_key, "font_color", self.current_font_color)
+
+        def _on_font_size_changed(val):
+            mode_key = self.style_mode_combo.currentData()
+            self.config_manager.set_mode_style(mode_key, "font_size", val)
+            self._notify_style_changed(mode_key)
+
+        def _pick_color():
+            from PyQt6.QtWidgets import QColorDialog
+            color = QColorDialog.getColor(QColor(self.current_font_color), self, "选择字体颜色")
+            if color.isValid():
+                self.current_font_color = color.name()
+                self.font_color_btn.setStyleSheet(f"background-color: {self.current_font_color}; color: {'#000' if self.current_font_color.upper() == '#FFFFFF' else '#FFF'};")
+                mode_key = self.style_mode_combo.currentData()
+                self.config_manager.set_mode_style(mode_key, "font_color", self.current_font_color)
+                self._notify_style_changed(mode_key)
+
+        self.font_color_btn.clicked.connect(_pick_color)
+        self.font_size_spin.valueChanged.connect(_on_font_size_changed)
+        self.style_mode_combo.currentIndexChanged.connect(_on_mode_changed)
+        
+        form_style.addRow("🎯 选择需配置的模式:", self.style_mode_combo)
+        form_style.addRow("🔠 独立字体大小:", self.font_size_spin)
+        form_style.addRow("🎨 独立字体颜色:", self.font_color_btn)
+        layout.addWidget(group_style)
+        
+        # 初始化加载当前选中的模式样式
+        _on_mode_changed(0)
+
+    def _notify_style_changed(self, mode_key: str):
+        for win in self.active_reading_windows.values():
+            if win and getattr(win, 'mode_name', '') == mode_key:
+                if hasattr(win, 'apply_mode_style'):
+                    win.apply_mode_style()
+                win.update_content()
+
+        # ========================================
+
         group_mode = QGroupBox("摸鱼伪装模式与快捷键绑定 (全套 21 种伪装模式)")
         mode_layout = QVBoxLayout(group_mode)
 
@@ -1204,7 +1281,7 @@ class BookshelfWindow(QMainWindow):
 
         mode = self.config_manager.settings.get("mode", "floating")
         from src.ui.stealth_views import STEALTH_VIEW_MAP
-        from src.ui.floating_view import FloatingView
+        from src.ui.stealth_views.floating_view import FloatingView
         view_cls = STEALTH_VIEW_MAP.get(mode, FloatingView)
         win = view_cls(self.config_manager, bookshelf_window=self)
 

@@ -147,7 +147,7 @@ class BaseStealthWindow(QWidget):
         book_path = self.book.file_path if (self.book and hasattr(self.book, 'file_path')) else None
 
         from src.ui.stealth_views import STEALTH_VIEW_MAP
-        from src.ui.floating_view import FloatingView
+        from src.ui.stealth_views.floating_view import FloatingView
         view_cls = STEALTH_VIEW_MAP.get(new_mode, FloatingView)
         new_win = view_cls(self.config_mgr, bookshelf_window=self.bookshelf_window)
 
@@ -297,6 +297,35 @@ class BaseStealthWindow(QWidget):
     def recalculate_lines(self, chap):
         """默认基于字数切分，子类可覆盖为像素级排版"""
         self.lines = chap.get_lines(line_length=self.get_line_length())
+
+    def apply_mode_style(self):
+        """应用从配置获取的具体模式的字体大小和颜色（子类可扩展覆盖具体控件的样式更新）"""
+        if not hasattr(self, 'editor') or not self.editor:
+            return
+            
+        f_size = self.config_mgr.get_mode_style(self.mode_name, "font_size", -1)
+        f_color = self.config_mgr.get_mode_style(self.mode_name, "font_color", "")
+        
+        if f_size > 0:
+            font = self.editor.font()
+            font.setPointSize(int(f_size))
+            self.editor.setFont(font)
+            
+        if f_color:
+            from PyQt6.QtGui import QColor
+            c = QColor(f_color)
+            luminance = (0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()) / 255.0
+            bg_color = "#FFFFFF" if luminance < 0.5 else "#2D2D2D"
+            
+            # 使用通用的 QSS 追加（不覆盖原有的边框等设置）
+            current_qss = self.editor.styleSheet()
+            new_qss = current_qss + f"""
+                QWidget {{
+                    color: {f_color};
+                    background-color: {bg_color};
+                }}
+            """
+            self.editor.setStyleSheet(new_qss)
 
     def render_view(self, error_msg: str = None):
         """抽象方法，子类必须实现。用于将 self.book, self.lines 和进度更新到 UI"""

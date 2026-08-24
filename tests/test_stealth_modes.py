@@ -5,9 +5,9 @@ from PyQt6.QtWidgets import QApplication
 
 from src.core.config import ConfigManager
 from src.ui.stealth_views import STEALTH_VIEW_MAP
-from src.ui.floating_view import FloatingView
-from src.ui.ide_pseudo_view import IDEPseudoView
-from src.ui.cad_pseudo_view import CADPseudoView
+from src.ui.stealth_views.floating_view import FloatingView
+from src.ui.stealth_views.ide_pseudo_view import IDEPseudoView
+from src.ui.stealth_views.cad_pseudo_view import CADPseudoView
 
 app = QApplication.instance() or QApplication(sys.argv)
 

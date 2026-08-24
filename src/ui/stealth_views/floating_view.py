@@ -13,9 +13,12 @@ class FloatingView(BaseStealthWindow):
 
     def init_ui(self):
         self.resize(600, 36)
-        font_size = self.config_mgr.settings.get("font_size", 11)
+        self.apply_mode_style()
+
+    def apply_mode_style(self):
+        f_size = self.config_mgr.get_mode_style(self.mode_name, "font_size", 11)
         font_family = self.config_mgr.settings.get("font_family", "Microsoft YaHei")
-        self.setFont(QFont(font_family, font_size))
+        self.setFont(QFont(font_family, int(f_size)))
 
     def _on_auto_scroll_timeout(self):
         """60 FPS 匀速连续向上像素推进回调"""
@@ -80,9 +83,18 @@ class FloatingView(BaseStealthWindow):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
-        bg_color = QColor(self.config_mgr.settings.get("bg_color", "#FFFFFF"))
-        font_color = QColor(self.config_mgr.settings.get("font_color", "#333333"))
+        f_color = self.config_mgr.get_mode_style(self.mode_name, "font_color", "#333333")
+        font_color = QColor(f_color)
+        
+        # 为了兼容亮色字体与暗色字体的阴影，根据亮度判断
+        luminance = (0.299 * font_color.red() + 0.587 * font_color.green() + 0.114 * font_color.blue()) / 255.0
+        # 根据亮度自适应背景色（背景全透明度调高一些，保证对比度）
+        if luminance > 0.5:
+            bg_color = QColor(0, 0, 0, 180)  # 字亮底暗
+        else:
+            bg_color = QColor(255, 255, 255, 180)  # 字暗底亮
 
         # 绘制无边框圆角背景底板
         painter.setBrush(bg_color)
@@ -95,6 +107,9 @@ class FloatingView(BaseStealthWindow):
         if not self.book or not self.book.chapters or not self.lines:
             painter.drawText(12, 24, "NovelRead | 右键打开文件或直接拖拽小说到此处")
             return
+
+        fm = QFontMetrics(self.font())
+        self.line_height = fm.lineSpacing() + 6
 
         chap = self.book.get_current_chapter()
         total_chaps = self.book.total_chapters
