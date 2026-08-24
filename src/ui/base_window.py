@@ -307,7 +307,17 @@ class BaseStealthWindow(QWidget):
         f_size = self.config_mgr.get_mode_style(self.mode_name, "font_size", -1)
         f_color = self.config_mgr.get_mode_style(self.mode_name, "font_color", "")
         
+        # 移除旧的动态注入样式，避免无限叠加
+        current_qss = widget.styleSheet()
+        import re
+        current_qss = re.sub(r'/\* DYNAMIC_STYLE_START \*/.*?/\* DYNAMIC_STYLE_END \*/', '', current_qss, flags=re.DOTALL)
+        
+        widget_class = widget.metaObject().className()
+        
+        dynamic_rules = []
         if f_size > 0:
+            dynamic_rules.append(f"font-size: {int(f_size)}pt !important;")
+            # 同时应用到底层 widget，以防某些控件不完全继承 qss
             font = widget.font()
             font.setPointSize(int(f_size))
             widget.setFont(font)
@@ -317,19 +327,15 @@ class BaseStealthWindow(QWidget):
             c = QColor(f_color)
             luminance = (0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()) / 255.0
             bg_color = "#FFFFFF" if luminance < 0.5 else "#2D2D2D"
+            dynamic_rules.append(f"color: {f_color} !important;")
+            dynamic_rules.append(f"background-color: {bg_color} !important;")
             
-            # 移除旧的动态注入样式，避免无限叠加
-            current_qss = widget.styleSheet()
-            import re
-            current_qss = re.sub(r'/\* DYNAMIC_STYLE_START \*/.*?/\* DYNAMIC_STYLE_END \*/', '', current_qss, flags=re.DOTALL)
-            
-            widget_class = widget.metaObject().className()
-            
+        if dynamic_rules:
+            rules_str = "\n                ".join(dynamic_rules)
             new_qss = current_qss + f"""
             /* DYNAMIC_STYLE_START */
             {widget_class} {{
-                color: {f_color} !important;
-                background-color: {bg_color} !important;
+                {rules_str}
             }}
             /* DYNAMIC_STYLE_END */
             """
