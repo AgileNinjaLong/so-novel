@@ -106,7 +106,7 @@ class DownloadWorker(QObject):
             book_url = self.book_info["url"]
             book_name = self.book_info.get("bookName", "未知书名")
             author = self.book_info.get("author", "未知作者")
-            
+
             # 1. 获取目录
             self.progress_signal.emit(self.task_id, 0, 0, "正在解析图书目录...")
             toc = self.client.get_toc(book_url, rule)
@@ -124,6 +124,7 @@ class DownloadWorker(QObject):
             os.makedirs(os.path.dirname(os.path.abspath(self.save_path)), exist_ok=True)
 
             import concurrent.futures
+            import random
             chapter_contents = [None] * total
             completed = 0
 
@@ -137,7 +138,9 @@ class DownloadWorker(QObject):
                 except Exception as e:
                     return i, f"下载失败: {e}"
 
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=30)
+            # 完全对齐 so-novel-main: Math.min(50, toc.size())
+            max_workers = min(50, total) if total > 0 else 1
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
             try:
                 futures = {executor.submit(_download_task, i, chap): i for i, chap in enumerate(toc)}
                 for future in concurrent.futures.as_completed(futures):
@@ -207,7 +210,10 @@ class DownloadWorker(QObject):
 
     def download_chapter_isolated(self, chapter_url: str, rule: dict) -> str:
         """使用独享物理 Session 抓取章节纯文本"""
+        import urllib.parse
+        import random
         chap_rule = rule.get("chapter", {})
+        ignore_ssl = rule.get("ignoreSsl", False)
         content_parts = []
         current_url = chapter_url
         visited = set()
@@ -217,16 +223,25 @@ class DownloadWorker(QObject):
                 break
             visited.add(current_url)
             resp = None
-            for attempt in range(3):
+
+            parsed = urllib.parse.urlparse(current_url)
+            req_headers = dict(self.client.headers)
+            req_headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+            req_headers["Host"] = parsed.netloc
+
+            for attempt in range(1, 4):
                 if self.cancel_event.is_set():
                     break
                 try:
-                    resp = self.session.get(current_url, timeout=12)
+                    # 模拟 CrawlUtils.randomInterval 间隔，以及重试翻倍指数退避
+                    interval_ms = random.randint(300, 800) if attempt > 1 else random.randint(100, 300)
+                    time.sleep((interval_ms * attempt) / 1000.0)
+
+                    resp = self.session.get(current_url, headers=req_headers, timeout=12, verify=not ignore_ssl)
                     if resp.status_code == 200:
                         break
                 except Exception:
-                    if attempt < 2:
-                        time.sleep(0.3)
+                    pass
 
             if not resp or resp.status_code != 200:
                 return "(本章下载失败)"
@@ -234,14 +249,15 @@ class DownloadWorker(QObject):
             try:
                 if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                     resp.encoding = resp.apparent_encoding
-                
+
+                from lxml import html
                 tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
-                
+
                 filter_tags = [t.strip() for t in chap_rule.get("filterTag", "").split(',') if t.strip()]
                 for tag in filter_tags:
                     for match in self.client._select_elements(tree, tag):
                         match.drop_tree()
-                
+
                 content_rule = chap_rule.get("content", "")
                 js_code = ""
                 if '@js:' in content_rule:
@@ -250,29 +266,41 @@ class DownloadWorker(QObject):
                 content_nodes = self.client._select_elements(tree, content_rule)
                 if not content_nodes:
                     break
-                    
+
                 node = content_nodes[0]
-                
+
                 if js_code:
                     raw_inner_html = html.tostring(node, encoding='unicode', method='html')
                     processed_html = self.client._apply_js(raw_inner_html, js_code)
                     node = html.fromstring(processed_html)
-                
+
                 for br in node.xpath(".//br"):
                     br.tail = "\n" + (br.tail or "")
                 for p in node.xpath(".//p"):
                     p.tail = "\n" + (p.tail or "")
-                    
+
                 text = node.text_content()
+
+                # 遵循 so-novel-main 的字符清理机制 CrawlUtils.cleanInvisibleChars
+                text = re.sub(r'[\x00-\x1f\x7f-\x9f​-‏﻿]', '', text)
+
                 filter_txt = chap_rule.get("filterTxt", "")
                 if filter_txt:
                     text = re.sub(filter_txt, '', text)
-                    
+
                 content_parts.append("\n".join([line.strip() for line in text.splitlines() if line.strip()]))
+
+                # 章节内翻页处理
+                next_page_rule = chap_rule.get("nextPage", "")
+                if next_page_rule:
+                    next_url = self.client._extract_text(tree, next_page_rule, resp.url)
+                    if next_url and next_url != current_url and next_url.startswith("http"):
+                        current_url = next_url
+                        continue
                 break
             except Exception:
                 return "(本章解析失败)"
-                
+
         return "\n".join(content_parts) if content_parts else "(本章暂无内容)"
 
 

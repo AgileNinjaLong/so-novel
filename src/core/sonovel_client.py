@@ -19,11 +19,13 @@ def get_resource_path(relative_path):
         return path
     return os.path.join(os.path.abspath('.'), relative_path)
 
-RULES_DIR = get_resource_path(os.path.join("SoNovel", "rules"))
+_so_novel_rules_path = os.path.join("SoNovel", "rules")
+_dev_rules_path = os.path.join("so-novel-main", "bundle", "rules")
+RULES_DIR = get_resource_path(_so_novel_rules_path)
+if not os.path.exists(RULES_DIR):
+    RULES_DIR = get_resource_path(_dev_rules_path)
 
-_js_lock = threading.Lock()
-_js_ctx = None
-_css_cache = {}
+_js_local = threading.local()
 
 def _get_css_selector(selector: str):
     if selector not in _css_cache:
@@ -32,11 +34,10 @@ def _get_css_selector(selector: str):
     return _css_cache[selector]
 
 def _get_js_ctx():
-    global _js_ctx
-    if _js_ctx is None:
+    if not hasattr(_js_local, 'ctx'):
         from py_mini_racer import MiniRacer
-        _js_ctx = MiniRacer()
-    return _js_ctx
+        _js_local.ctx = MiniRacer()
+    return _js_local.ctx
 
 class SoNovelClient:
     def __init__(self, rules_dir: str = RULES_DIR):
@@ -98,16 +99,15 @@ class SoNovelClient:
         if not js_code:
             return text
         try:
-            with _js_lock:
-                ctx = _get_js_ctx()
-                # 将当前提取的文本变量绑定到 js 的 r 变量中
-                ctx.eval(f"var r = {json.dumps(text)};")
-                
-                # 由于 SoNovel 的 js 是直接操作 r 变量，如 r=r.replace(...)
-                # 所以我们需要执行完该语句后，返回 r 的最终值
-                js_script = js_code + "\n r;"
-                result = ctx.eval(js_script)
-                return str(result)
+            ctx = _get_js_ctx()
+            # 将当前提取的文本变量绑定到 js 的 r 变量中
+            ctx.eval(f"var r = {json.dumps(text)};")
+            
+            # 由于 SoNovel 的 js 是直接操作 r 变量，如 r=r.replace(...)
+            # 所以我们需要执行完该语句后，返回 r 的最终值
+            js_script = js_code + "\n r;"
+            result = ctx.eval(js_script)
+            return str(result)
         except Exception as e:
             print(f"JS 执行异常: {e}\nCode: {js_code}")
             return text
