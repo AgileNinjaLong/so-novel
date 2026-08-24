@@ -961,8 +961,47 @@ class BookshelfWindow(QMainWindow):
     def init_tab_settings(self):
         layout = QVBoxLayout(self.tab_settings)
 
-        self.settings_subtabs = QTabWidget()
-        layout.addWidget(self.settings_subtabs)
+        from PyQt6.QtWidgets import QListWidget, QStackedWidget
+        
+        # 使用左右分栏，左边竖排 List 作为垂直 Tab，右边 Stacked 布局展示内容
+        h_layout = QHBoxLayout()
+        
+        self.settings_list = QListWidget()
+        self.settings_list.setFixedWidth(160)
+        self.settings_list.setStyleSheet("""
+            QListWidget {
+                background-color: #252530;
+                border: 1px solid #2D2D3A;
+                border-radius: 6px;
+                padding: 5px;
+                outline: none;
+            }
+            QListWidget::item {
+                height: 40px;
+                color: #B0B0C0;
+                padding-left: 10px;
+                border-radius: 4px;
+                font-size: 13px;
+                font-weight: bold;
+                margin-bottom: 4px;
+            }
+            QListWidget::item:selected {
+                background-color: #18181C;
+                color: #64B5F6;
+                border-left: 4px solid #64B5F6;
+            }
+            QListWidget::item:hover:!selected {
+                background-color: #2D2D3A;
+            }
+        """)
+        
+        self.settings_stack = QStackedWidget()
+        self.settings_list.currentRowChanged.connect(self.settings_stack.setCurrentIndex)
+        
+        h_layout.addWidget(self.settings_list)
+        h_layout.addWidget(self.settings_stack)
+        
+        layout.addLayout(h_layout)
 
         # ====== SubTab 1: 外观样式 ======
         tab_appearance = QWidget()
@@ -1023,7 +1062,8 @@ class BookshelfWindow(QMainWindow):
         layout_appearance.addWidget(group_style)
         layout_appearance.addStretch()
         
-        self.settings_subtabs.addTab(tab_appearance, "🎨 外观样式")
+        self.settings_stack.addWidget(tab_appearance)
+        self.settings_list.addItem("🎨 外观样式")
 
         # 初始化加载当前选中的模式样式
         _on_mode_changed(0)
@@ -1065,7 +1105,8 @@ class BookshelfWindow(QMainWindow):
         mode_layout.addWidget(scroll_area)
         layout_hotkeys.addWidget(group_mode)
         
-        self.settings_subtabs.addTab(tab_hotkeys, "⌨️ 快捷键绑定")
+        self.settings_stack.addWidget(tab_hotkeys)
+        self.settings_list.addItem("⌨️ 快捷键绑定")
 
         # ====== SubTab 3: 阅读与滚动 ======
         tab_reading = QWidget()
@@ -1102,7 +1143,11 @@ class BookshelfWindow(QMainWindow):
         layout_reading.addWidget(group_read)
         layout_reading.addStretch()
 
-        self.settings_subtabs.addTab(tab_reading, "📖 阅读与滚动")
+        self.settings_stack.addWidget(tab_reading)
+        self.settings_list.addItem("📖 阅读与滚动")
+
+        # ====== 默认选中第一个子选项卡 ======
+        self.settings_list.setCurrentRow(0)
 
         # ====== 保存按钮 ======
         save_btn = QPushButton("💾 保存系统设置")
