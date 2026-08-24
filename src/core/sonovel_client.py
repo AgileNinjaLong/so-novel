@@ -168,15 +168,17 @@ class SoNovelClient:
             elif lang == "java":
                 if code == "base64.decode()":
                     import base64
-                    try:
-                        decoded_lines = []
-                        for line in result.splitlines():
-                            line = line.strip()
-                            if line:
-                                decoded_lines.append(base64.b64decode(line).decode('utf-8', errors='ignore'))
-                        result = "".join(decoded_lines)
-                    except Exception as e:
-                        print(f"Base64 解码异常: {e}")
+                    import re
+                    def _repl(m):
+                        chunk = m.group(0)
+                        try:
+                            # 长度是4的倍数时解码
+                            if len(chunk) % 4 == 0:
+                                return base64.b64decode(chunk).decode('utf-8', errors='ignore')
+                        except Exception:
+                            pass
+                        return chunk
+                    result = re.sub(r'[A-Za-z0-9+/=]{16,}', _repl, result)
                 else:
                     # 处理 string.replace(...)
                     import re
@@ -610,11 +612,31 @@ class SoNovelClient:
                 if resp.encoding.lower() in ['iso-8859-1', 'us-ascii']:
                     resp.encoding = resp.apparent_encoding
                 
-                tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
+                resp_body = resp.content.decode(resp.encoding or 'utf-8', errors='ignore')
+                tree = html.fromstring(resp_body.encode(resp.encoding or 'utf-8'), parser=html.HTMLParser(encoding=resp.encoding))
                 base_uri = toc_rule.get("baseUri", resp.url)
                 if not base_uri:
                     base_uri = resp.url
                 
+                # 【100% 对齐 so-novel-main TocParser.java extractElements】
+                list_rule = toc_rule.get("list", "")
+                if list_rule:
+                    if "@js:" in list_rule:
+                        sel, js_code = list_rule.split("@js:", 1)
+                        raw_h = html.tostring(tree, encoding='unicode')
+                        try:
+                            with _js_lock:
+                                ctx = _get_js_ctx()
+                                ctx.eval('var r = ' + json.dumps(raw_h) + ';')
+                                processed = str(ctx.eval(js_code + '\n r;'))
+                                tree = html.fromstring(processed)
+                        except Exception:
+                            pass
+                    else:
+                        list_nodes = self._select_elements(tree, list_rule)
+                        if list_nodes:
+                            tree = list_nodes[0]
+
                 items = self._select_elements(tree, toc_rule.get("item", ""))
                 
                 for item in items:
@@ -728,10 +750,6 @@ class SoNovelClient:
                     resp.encoding = resp.apparent_encoding
                 
                 tree = html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
-                filter_tags = [t.strip() for t in chap_rule.get("filterTag", "").split(',') if t.strip()]
-                for tag in filter_tags:
-                    for match in self._select_elements(tree, tag):
-                        match.drop_tree()
                 
                 content_rule = chap_rule.get("content", "")
                 dsl = ""
@@ -745,6 +763,14 @@ class SoNovelClient:
                     break
                     
                 node = content_nodes[0]
+                
+                # 【100% 对齐 so-novel-main HtmlUtils.removeTags】仅在正文节点内部清洗过滤标签
+                filter_tags = [t.strip() for t in chap_rule.get("filterTag", "").split(',') if t.strip()]
+                for tag in filter_tags:
+                    if tag.lower() not in ('div', 'section', 'article'): # 保护容器自身不被整体裁切
+                        for match in self._select_elements(node, tag):
+                            match.drop_tree()
+
                 if dsl:
                     raw_inner_html = html.tostring(node, encoding='unicode', method='html')
                     processed_html = self._execute_dsl(raw_inner_html, dsl)
