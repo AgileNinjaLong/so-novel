@@ -5,45 +5,69 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>登录 · 小说下载 WebUI</title>
 <link rel="stylesheet" href="/static/style.css">
-<style>
-  .login-wrap { min-height: 100vh; display: grid; place-items: center; background: var(--bg); }
-  .login-card { width: min(380px, 92vw); }
-  .login-card h2 { margin: 0 0 6px; font-size: 18px; }
-  .login-card .hint { margin-bottom: 16px; }
-</style>
 </head>
 <body>
-<div class="login-wrap">
-  <div class="card login-card">
-    <h2>访问口令</h2>
-    <p class="hint">该站点已开启口令保护，请输入部署时设置的 WEBAPP_PASSWORD。</p>
-    <div class="row">
-      <input id="pwd" type="password" placeholder="口令" style="flex:1">
+<div class="auth-wrap">
+  <div class="card auth-card">
+    <h1>登录</h1>
+    <p class="subtitle">输入账号密码进入下载界面</p>
+    <div id="alert" class="alert bad hidden"></div>
+    <div class="field">
+      <label for="username">用户名</label>
+      <input id="username" type="text" autocomplete="username" placeholder="用户名">
     </div>
-    <div class="row">
-      <button id="loginBtn" class="btn primary" style="width:100%">进入</button>
+    <div class="field">
+      <label for="password">密码</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="至少 8 位">
     </div>
-    <p id="msg" class="msg"></p>
+    <div class="actions">
+      <button id="loginBtn" class="btn primary" style="flex:1">登录</button>
+    </div>
+    <p class="switch-line">还没有账号？<a id="registerLink" href="/register">用注册密钥注册</a></p>
+    <p class="switch-line muted" id="closedTip" style="display:none">当前未开放注册（管理员尚未生成注册密钥）</p>
   </div>
 </div>
 <script>
-  const msg = document.getElementById('msg');
-  const pwd = document.getElementById('pwd');
-  async function login() {
-    const res = await fetch('/api/login', {
+const alertBox = document.getElementById('alert');
+function show(text, kind = 'bad') {
+  alertBox.textContent = text;
+  alertBox.className = 'alert ' + kind;
+}
+async function submitLogin() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  if (!username || !password) return show('请输入用户名和密码');
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pwd.value }),
+      body: JSON.stringify({ username, password }),
     });
     if (res.ok) { location.href = '/'; return; }
-    let detail = '口令错误';
-    try { detail = (await res.json()).detail || detail; } catch (_) {}
-    msg.textContent = detail;
-    msg.className = 'msg bad';
+    let detail = '登录失败';
+    try { const data = await res.json(); detail = data.detail || detail; } catch (_) {}
+    show(typeof detail === 'string' ? detail : JSON.stringify(detail));
+  } catch (err) {
+    show('网络错误：' + err.message);
+  } finally {
+    btn.disabled = false;
   }
-  document.getElementById('loginBtn').addEventListener('click', login);
-  pwd.addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
-  pwd.focus();
+}
+document.getElementById('loginBtn').addEventListener('click', submitLogin);
+['username', 'password'].forEach((id) => {
+  document.getElementById(id).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitLogin();
+  });
+});
+fetch('/api/meta').then((r) => r.json()).then((meta) => {
+  if (!meta.app.registration_open) {
+    document.getElementById('registerLink').style.display = 'none';
+    document.getElementById('closedTip').style.display = 'block';
+  }
+}).catch(() => {});
+document.getElementById('username').focus();
 </script>
 </body>
 </html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>注册 · 小说下载 WebUI</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="card auth-card">
+    <h1>注册</h1>
+    <p class="subtitle">需要管理员设置的注册密钥才能注册</p>
+    <div id="alert" class="alert bad hidden"></div>
+    <div class="field">
+      <label for="username">用户名</label>
+      <input id="username" type="text" autocomplete="username" placeholder="3-24 位，可中英文/数字/下划线">
+    </div>
+    <div class="field">
+      <label for="password">密码</label>
+      <input id="password" type="password" autocomplete="new-password" placeholder="8-128 位">
+    </div>
+    <div class="field">
+      <label for="password2">确认密码</label>
+      <input id="password2" type="password" autocomplete="new-password" placeholder="再次输入密码">
+    </div>
+    <div class="field">
+      <label for="invite">注册密钥</label>
+      <input id="invite" type="text" autocomplete="off" spellcheck="false" placeholder="向管理员索取">
+    </div>
+    <div class="actions">
+      <button id="registerBtn" class="btn primary" style="flex:1">注册并登录</button>
+    </div>
+    <p class="switch-line">已有账号？<a href="/login">去登录</a></p>
+  </div>
+</div>
+<script>
+const alertBox = document.getElementById('alert');
+function show(text, kind = 'bad') { alertBox.textContent = text; alertBox.className = 'alert ' + kind; }
+async function submitRegister() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const password2 = document.getElementById('password2').value;
+  const invite = document.getElementById('invite').value.trim();
+  if (!username || !password) return show('请填写用户名和密码');
+  if (password !== password2) return show('两次输入的密码不一致');
+  if (!invite) return show('请输入注册密钥');
+  const btn = document.getElementById('registerBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, invite_key: invite }),
+    });
+    if (res.ok) { location.href = '/'; return; }
+    let detail = '注册失败';
+    try { const data = await res.json(); detail = data.detail || detail; } catch (_) {}
+    show(typeof detail === 'string' ? detail : JSON.stringify(detail));
+  } catch (err) {
+    show('网络错误：' + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById('registerBtn').addEventListener('click', submitRegister);
+fetch('/api/meta').then((r) => r.json()).then((meta) => {
+  if (!meta.app.registration_open) {
+    show('当前未开放注册：管理员尚未生成注册密钥', 'bad');
+    document.getElementById('registerBtn').disabled = true;
+  }
+}).catch(() => {});
+document.getElementById('username').focus();
+</script>
+</body>
+</html>

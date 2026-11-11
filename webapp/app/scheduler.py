@@ -65,14 +65,18 @@ class Scheduler:
                 pass
 
     # ---------------- 对外状态 ----------------
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, viewer: dict[str, Any] | None = None) -> dict[str, Any]:
         active = store.active_source(self._default_source)
         pending = store.pending_switch()
         running = store.running_task()
         queued = store.queued_tasks()
         positions = {t["id"]: i + 1 for i, t in enumerate(queued)}
+        viewer_id = (viewer or {}).get("id")
+        viewer_is_admin = (viewer or {}).get("role") == store.ROLE_ADMIN
         tasks: list[dict[str, Any]] = []
         for task in store.list_tasks(limit=PRUNE_KEEP):
+            mine = bool(viewer_id) and task.get("user_id") == viewer_id
+            can_manage = mine or viewer_is_admin
             item = {
                 "id": task["id"],
                 "source": task["source"],
@@ -84,11 +88,18 @@ class Scheduler:
                 "chapters_done": task["chapters_done"],
                 "chapters_total": task["chapters_total"],
                 "message": task["message"],
-                "error": task["error"],
+                # 别人的失败原因不展示，避免泄露他人请求信息
+                "error": task["error"] if can_manage else None,
                 "created_at": task["created_at"],
                 "started_at": task["started_at"],
                 "finished_at": task["finished_at"],
-                "has_file": bool(task["file_path"]),
+                "has_file": bool(task["file_path"]) if can_manage else False,
+                "mine": mine,
+                "can_cancel": can_manage
+                and task["status"] in {store.STATUS_QUEUED, store.STATUS_RUNNING},
+                "can_download": can_manage
+                and task["status"] == store.STATUS_SUCCESS
+                and bool(task["file_path"]),
             }
             if task["status"] == store.STATUS_QUEUED:
                 item["queue_position"] = positions.get(task["id"], 0)
@@ -108,7 +119,14 @@ class Scheduler:
 
     # ---------------- 提交任务 ----------------
     def enqueue(
-        self, *, source: str, user_name: str, title: str, book_ref: str, fmt: str
+        self,
+        *,
+        source: str,
+        user_id: str,
+        user_name: str,
+        title: str,
+        book_ref: str,
+        fmt: str,
     ) -> dict[str, Any]:
         with self._cv:
             active = store.active_source(self._default_source)
@@ -135,6 +153,7 @@ class Scheduler:
                 )
             task = store.create_task(
                 source=source,
+                user_id=user_id,
                 user_name=user_name,
                 title=title.strip() or "未命名",
                 book_ref=book_ref.strip(),

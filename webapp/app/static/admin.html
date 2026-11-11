@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>后台管理 · 小说下载 WebUI</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">管</span>
+    <div>
+      <h1>后台管理</h1>
+      <p class="sub">注册密钥 · 用户有效期 · 全部任务</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span class="user-chip"><span class="dot"></span><span id="adminName">…</span></span>
+    <a class="icon-btn" href="/">返回下载页</a>
+    <button id="logoutBtn" class="icon-btn">退出</button>
+  </div>
+</header>
+
+<div class="admin-wrap">
+  <div class="admin-grid">
+    <section class="card stat">
+      <span class="v" id="userCount">0</span>
+      <span class="k">注册用户</span>
+    </section>
+    <section class="card stat">
+      <span class="v" id="queueInfo">0</span>
+      <span class="k">队列 / 运行</span>
+    </section>
+    <section class="card stat">
+      <span class="v" id="taskCount">0</span>
+      <span class="k">任务总数</span>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="queue-head">
+      <h2>注册密钥</h2>
+      <div class="queue-actions">
+        <button id="rotateKeyBtn" class="btn small primary">生成新密钥</button>
+        <button id="clearKeyBtn" class="btn small ghost">清空（关闭注册）</button>
+      </div>
+    </div>
+    <p class="hint">用户注册时必须输入该密钥。清空后任何人都无法注册；已登录用户不受影响。密钥由 ai/nanoid 算法生成（21 字符 ≈ 126 bit 熵），数据库唯一约束保证不重复。</p>
+    <div id="keyBox" class="key-box">尚未生成</div>
+    <p id="keyMeta" class="hint" style="margin-top:8px"></p>
+    <p id="keyMsg" class="msg"></p>
+  </section>
+
+  <section class="card">
+    <div class="queue-head">
+      <h2>用户列表 <span id="userBadge" class="badge info"></span></h2>
+      <button id="refreshBtn" class="btn small ghost">刷新</button>
+    </div>
+    <p class="hint">有效期按钮为「叠加」：在当前到期时间上加天数，剩余天数上限 65535 天；「永久」为独立标记，不再计天数。</p>
+    <div id="userList" class="user-list"></div>
+    <p id="userMsg" class="msg"></p>
+  </section>
+
+  <section class="card">
+    <div class="queue-head">
+      <h2>全部任务 <span id="taskBadge" class="badge info"></span></h2>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>状态</th><th>书名</th><th>来源</th><th>提交者</th><th>进度</th><th>操作</th></tr>
+        </thead>
+        <tbody id="taskBody"></tbody>
+      </table>
+      <p id="emptyTasks" class="empty">暂无任务</p>
+    </div>
+    <p id="taskMsg" class="msg"></p>
+  </section>
+</div>
+
+<script src="/static/admin.js"></script>
+</body>
+</html>

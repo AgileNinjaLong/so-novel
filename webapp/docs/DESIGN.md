@@ -9,6 +9,14 @@
 3. **一旦切换**，其他正在使用的来源必须停用（或者选择「下载结束之后再切」）；
 4. 下载**单线程**；多用户同时使用时明确显示「排队中」。
 
+第二轮需求追加：
+
+5. 前端重构并兼容移动端；
+6. 完全取消匿名：注册必须输入后台生成的密钥，没有密钥就无法注册、也无法进入界面；
+7. 独立管理员账号 + 后台管理页（用户列表、有效期叠加、密钥管理、全部任务）；
+8. 有效期档位 1/31/124/372/999999 天，**叠加**且封顶 uint16（65535 天），999999 记为永久；
+9. 全部数据落库；密钥使用 GitHub 开源项目（ai/nanoid）的生成算法且不重复；
+
 ## 为什么两个插件的接入方式不同
 
 | | so-novel | 番茄下载器 |
@@ -101,6 +109,76 @@ FastAPI（app/main.py）
 - 服务重启：启动时把遗留的 `running` 标记为 `failed`（「服务重启导致任务中断」），
   队列里的任务保留继续排队。
 
+## 账号体系与后台管理
+
+### 数据模型（SQLite）
+
+| 表 | 关键字段 | 说明 |
+| --- | --- | --- |
+| `users` | id, username(UNIQUE NOCASE), password_hash, role, status, permanent, expires_at | 账号与有效期 |
+| `sessions` | token_hash(PK), user_id, expires_at, ip, ua | 只存令牌的 sha256 |
+| `tasks` | …, user_id, user_name | 任务归属 |
+| `settings` | key/value | 当前来源、待切换、注册密钥及其生成时间 |
+
+`init_db()` 会对旧库做列迁移（补 `tasks.user_id` / `user_name`），因此升级不需要手工改库。
+
+### 注册与登录
+
+- 注册：`invite_key` 必须与 `settings.registration_key` **常量时间比较**相等；密钥为空时直接 403。
+- 新用户默认 0 天（`WEBAPP_DEFAULT_GRANT_DAYS` 可改），此时可登录、可看队列，但提交下载/搜索/切换会被 403 拦下并提示「未开通或已过期」。
+- 登录成功签发 `nanoid(43)` 会话令牌，写 HttpOnly Cookie，库里只留 sha256；默认 30 天。
+- 登录/注册按 IP 做内存限流（每分钟 8 次），超限 429。
+- 管理员账号由 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 在启动时**创建或同步**（改环境变量即改口令，并清掉旧会话），且被强制设为 `permanent=1`。
+
+### 密钥算法（ai/nanoid）
+
+`app/security.py` 移植了 [ai/nanoid](https://github.com/ai/nanoid)（MIT）的生成逻辑：
+
+```
+mask = (2 << (len(alphabet) - 1).bit_length() - 1) - 1
+step = int(1.6 * mask * size / len(alphabet))
+逐字节取 alphabet[byte & mask]，凑够 size 个字符
+```
+
+- 注册密钥 21 字符（URL 安全字母表，≈126 bit 熵）；
+- 会话令牌 43 字符（≈258 bit 熵）；
+- 碰撞处理：数据库 UNIQUE 约束 + `unique_nanoid()` 重试；
+- 口令：`hashlib.scrypt(n=16384, r=8, p=1, 随机盐)`，存 `scrypt$n$r$p$salt$hash`。
+
+### 有效期数学
+
+`app/validity.py`：
+
+```
+is_active(user) = status == active and (permanent or expires_at > now)
+grant(user, days):
+    days >= 999999 → {permanent: 1, expires_at: None}
+    否则 → expires = min(max(now, old_expiry) + days*86400, now + 65535*86400)
+```
+
+这样「叠加」就是把新天数加在**现有到期时间**上（过期账号从当前时间重新累计），
+剩余天数绝不会超过 uint16 上限；`999999` 不再参与天数计算。
+
+### 权限矩阵
+
+| | 未登录 | 未开通 | 有效 | 管理员 |
+| --- | --- | --- | --- | --- |
+| 页面 | 跳 `/login` | ✅ | ✅ | ✅ |
+| 队列只读 | 401 | ✅ | ✅ | ✅ |
+| 提交/搜索/切换 | 401 | 403 | ✅ | ✅ |
+| 取消/下载（他人任务） | 401 | 403 | 403 | ✅ |
+| 后台接口 | 401 | 403 | 403 | ✅ |
+
+任务快照按**查看者**计算 `mine` / `can_cancel` / `can_download` / `has_file`，
+别人的失败原因与文件状态不会下发；服务端对每个操作再校验一次归属，前端标记只是提示。
+
+### 前端响应式
+
+- 桌面：`grid-template-columns: minmax(300px,400px) 1fr` 双栏；
+- ≤900px：单栏；
+- ≤760px：队列表格 `thead` 隐藏，`tr/td` 变块级卡片，用 `td[data-label]::before` 显示字段名；
+- ≤560px：顶栏改为上下两行，避免品牌与用户徽章挤压。
+
 ## 已知限制
 
 - 番茄同一时间只跑一本是上游硬编码（429），本站队列恰好匹配；但若宿主机同时有别的进程
@@ -109,3 +187,6 @@ FastAPI（app/main.py）
   「单线程」约束针对的是**任务级**，不是上游内部的章节并发。
 - 两个来源都不支持「指定起止章节」：so-novel CLI 无此参数，番茄 API 虽有 `range_start/end`
   但本界面未暴露（避免误用导致静默全本下载）。
+- 注册密钥只有「生成 / 轮换 / 清空」，没有手填自定义短语（需求要求用开源算法生成，故不提供弱口令入口）。
+- 管理员账号来自环境变量：修改 `ADMIN_PASSWORD` 后重启即生效，同时会清掉管理员旧会话。
+- 用户有效期以「天」为粒度，不支持小时级；`permanent` 用户不再显示天数。

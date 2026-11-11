@@ -16,11 +16,9 @@
     </div>
   </div>
   <div class="topbar-right">
-    <label class="userbox">
-      <span>昵称</span>
-      <input id="userName" maxlength="24" placeholder="匿名" autocomplete="off">
-    </label>
-    <span id="authBadge" class="badge hidden"></span>
+    <span id="userChip" class="user-chip"><span class="dot"></span><span id="userName">…</span></span>
+    <button id="adminBtn" class="icon-btn hidden">后台管理</button>
+    <button id="logoutBtn" class="icon-btn">退出</button>
   </div>
 </header>
 
@@ -30,11 +28,10 @@
     <select id="sourceSelect"></select>
     <button id="switchBtn" class="btn primary">切换来源</button>
   </div>
-  <div class="source-right">
-    <div id="sourceStatus" class="source-status"></div>
-  </div>
+  <div id="sourceStatus" class="source-status"></div>
 </section>
 
+<div id="accountBanner" class="banner bad hidden"></div>
 <div id="switchBanner" class="banner hidden"></div>
 
 <main class="layout">
@@ -50,34 +47,35 @@
     </div>
     <div id="urlMode" class="mode hidden">
       <div class="row">
-        <input id="urlBox" type="text" placeholder="粘贴书籍详情页链接，例如 https://www.xxx.com/book/123.html" autocomplete="off">
+        <input id="urlBox" type="text" placeholder="粘贴书籍详情页链接" autocomplete="off">
       </div>
     </div>
-    <div class="row fmt-row">
-      <label for="fmtSelect">导出格式</label>
-      <select id="fmtSelect"></select>
-      <label for="titleBox" class="ml">书名（可留空）</label>
-      <input id="titleBox" type="text" placeholder="留空则由来源自动识别" autocomplete="off">
-      <button id="enqueueBtn" class="btn primary">加入下载队列</button>
+    <div class="row">
+      <label for="fmtSelect" class="muted">导出格式</label>
+      <select id="fmtSelect" style="max-width:140px"></select>
+    </div>
+    <div class="row">
+      <input id="titleBox" type="text" placeholder="书名（可留空，由来源识别）" autocomplete="off">
+    </div>
+    <div class="row">
+      <button id="enqueueBtn" class="btn primary" style="flex:1">加入下载队列</button>
     </div>
     <p id="enqueueMsg" class="msg"></p>
   </section>
 
   <section class="card queue-card">
     <div class="queue-head">
-      <h2>下载队列 <span id="countBadge" class="count"></span></h2>
+      <h2>下载队列 <span id="countBadge" class="badge info"></span></h2>
       <div class="queue-actions">
-        <button id="cleanupBtn" class="btn ghost" title="删除失败与已取消的记录（保留已完成的下载）">清理失败/取消</button>
-        <button id="refreshBtn" class="btn ghost">刷新</button>
+        <button id="cleanupBtn" class="btn ghost small hidden">清理失败/取消</button>
+        <button id="refreshBtn" class="btn ghost small">刷新</button>
       </div>
     </div>
-    <p class="hint">同一时间只下载一本；多人同时提交时会按顺序排队，先到先得。</p>
+    <p class="hint">同一时间只下载一本；多人同时提交按顺序排队，先到先得。只有自己的任务能取消或下载。</p>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr>
-            <th>状态</th><th>书名</th><th>来源</th><th>提交者</th><th>进度</th><th>操作</th>
-          </tr>
+          <tr><th>状态</th><th>书名</th><th>来源</th><th>提交者</th><th>进度</th><th>操作</th></tr>
         </thead>
         <tbody id="taskBody"></tbody>
       </table>
@@ -97,17 +95,6 @@
     </div>
   </div>
 </div>
-
-<template id="rowTpl">
-  <tr>
-    <td class="status-cell"></td>
-    <td class="title-cell"></td>
-    <td class="source-cell"></td>
-    <td class="user-cell"></td>
-    <td class="progress-cell"></td>
-    <td class="action-cell"></td>
-  </tr>
-</template>
 
 <script src="/static/app.js"></script>
 </body>

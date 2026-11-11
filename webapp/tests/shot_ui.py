@@ -1,12 +1,15 @@
-"""用本机 Chrome 通过 Playwright 截图前端关键状态（仅用于本地验收，不随部署）。
+"""用本机 Chrome 通过 Playwright 截图前端各页面（桌面与移动端）。
 
-用法：CHROME_PATH=<chrome 可执行文件> WEBAPP_URL=http://127.0.0.1:8099 python tests/shot_ui.py <输出目录>
+用法：
+    CHROME_PATH=<chrome> WEBAPP_URL=http://127.0.0.1:8099 ADMIN_USERNAME=root \
+    ADMIN_PASSWORD=xxx python tests/shot_ui.py <输出目录>
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
@@ -14,34 +17,74 @@ CHROME = os.environ.get(
     "CHROME_PATH", r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 )
 BASE = os.environ.get("WEBAPP_URL", "http://127.0.0.1:8099").rstrip("/")
+ADMIN_USER = os.environ.get("ADMIN_USERNAME", "root")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "admin-pass-123")
 
 
 def main() -> int:
-    out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+    out = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+    out.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as pw:
         browser = pw.chromium.launch(executable_path=CHROME, headless=True)
-        page = browser.new_page(viewport={"width": 1500, "height": 1000})
-        page.goto(BASE, wait_until="networkidle")
-        page.wait_for_timeout(3500)
-        page.screenshot(path=f"{out_dir}/shot-queue.png", full_page=True)
-        print("saved shot-queue.png")
-        print("source status:", page.inner_text("#sourceStatus").replace("\n", " / "))
 
-        counts = page.inner_text("#countBadge")
-        print("counts:", counts)
+        # 1) 登录页
+        page = browser.new_page(viewport={"width": 1280, "height": 820})
+        page.goto(f"{BASE}/login", wait_until="networkidle")
+        page.screenshot(path=str(out / "login.png"))
+        print("saved login.png")
 
-        # 触发切换弹窗（当前有 running 任务时选另一个来源）
-        page.select_option("#sourceSelect", "sonovel")
-        page.wait_for_timeout(800)
-        modal_visible = page.is_visible("#modal")
-        print("modal visible:", modal_visible)
-        if modal_visible:
-            page.screenshot(path=f"{out_dir}/shot-modal.png", full_page=False)
-            print("saved shot-modal.png")
-            print("modal text:", page.inner_text("#modalText")[:200].replace("\n", " | "))
-            page.click("#modalCancel")
-            page.wait_for_timeout(300)
-            print("after cancel, select back to:", page.input_value("#sourceSelect"))
+        # 2) 注册页
+        page.goto(f"{BASE}/register", wait_until="networkidle")
+        page.screenshot(path=str(out / "register.png"))
+        print("saved register.png")
+
+        # 3) 登录后的主界面
+        page.goto(f"{BASE}/login", wait_until="networkidle")
+        page.fill("#username", ADMIN_USER)
+        page.fill("#password", ADMIN_PASS)
+        page.click("#loginBtn")
+        page.wait_for_url(f"{BASE}/", timeout=15000)
+        page.wait_for_timeout(2500)
+        page.screenshot(path=str(out / "app.png"), full_page=True)
+        print("saved app.png")
+
+        # 4) 后台
+        page.goto(f"{BASE}/admin", wait_until="networkidle")
+        page.wait_for_timeout(1800)
+        page.screenshot(path=str(out / "admin.png"), full_page=True)
+        print("saved admin.png")
+
+        # 5) 移动端（iPhone 尺寸）
+        mobile = browser.new_page(
+            viewport={"width": 390, "height": 844},
+            device_scale_factor=2,
+            is_mobile=True,
+            has_touch=True,
+            user_agent=(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+            ),
+        )
+        context = mobile.context
+        context.add_cookies(
+            [
+                {
+                    "name": c["name"],
+                    "value": c["value"],
+                    "domain": "127.0.0.1",
+                    "path": "/",
+                }
+                for c in page.context.cookies()
+                if c["name"] == "novel_session"
+            ]
+            or []
+        )
+        mobile.goto(f"{BASE}/", wait_until="networkidle")
+        mobile.wait_for_timeout(2000)
+        mobile.screenshot(path=str(out / "app-mobile.png"), full_page=True)
+        print("saved app-mobile.png")
+        print("mobile logged in:", mobile.locator("#userName").inner_text()[:40])
+
         browser.close()
     return 0
 

@@ -42,8 +42,10 @@ class Settings:
     )
     host: str = field(default_factory=lambda: _env_str("WEBAPP_HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: _env_int("WEBAPP_PORT", 8080))
-    # 可选：整站访问密码（留空表示不校验，公网部署强烈建议设置）
-    password: str = field(default_factory=lambda: _env_str("WEBAPP_PASSWORD", ""))
+    # 登录 Cookie 是否加 Secure（HTTPS / 反向代理部署建议开启）
+    cookie_secure: bool = field(
+        default_factory=lambda: _env_bool("WEBAPP_COOKIE_SECURE", False)
+    )
     # 队列轮询间隔（前端使用），仅用于展示
     poll_interval_ms: int = field(default_factory=lambda: _env_int("WEBAPP_POLL_MS", 1500))
     # 单任务超时（秒），0 表示不限制
