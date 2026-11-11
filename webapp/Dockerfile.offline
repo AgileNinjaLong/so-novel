@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1
+#
+# 离线构建版：不联网下载上游产物，直接从构建上下文里的 vendor/ 拷贝。
+# 适用于服务器访问 GitHub 慢/被拦的情况。
+# 用法：把 Linux 版上游产物放到 ./vendor（见 scripts/prepare_vendor.py），然后
+#   docker compose -f docker-compose.offline.yml up -d --build
+
+# ---- 阶段 1：只取官方 JRE 21 ----
+FROM eclipse-temurin:21-jre AS jre
+
+# ---- 阶段 2：运行本站 Web 应用 ----
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    WEBAPP_DATA_DIR=/data \
+    WEBAPP_PORT=8080 \
+    WEBAPP_HOST=0.0.0.0
+
+COPY --from=jre /opt/java/openjdk /opt/jre
+ENV JAVA_HOME=/opt/jre
+ENV PATH=/opt/jre/bin:$PATH
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ---- 上游产物：来自构建上下文的 vendor/（Linux 版）----
+COPY vendor/sonovel /app/vendor/sonovel
+COPY vendor/tomato/bin/Tomato-Novel-Downloader /app/vendor/tomato/bin/Tomato-Novel-Downloader
+RUN chmod +x /app/vendor/tomato/bin/Tomato-Novel-Downloader \
+ && test -f /app/vendor/sonovel/app.jar || (echo "vendor/sonovel/app.jar 缺失，请先准备 vendor/" && exit 1)
+
+COPY app ./app
+COPY serve.py ./
+COPY scripts ./scripts
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+RUN mkdir -p /data
+VOLUME ["/data"]
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).read()" || exit 1
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["python", "serve.py"]

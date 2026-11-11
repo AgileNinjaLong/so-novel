@@ -125,6 +125,34 @@ docker compose up -d --build
 # 打开 http://<服务器IP>:8080/
 ```
 
+### Docker（离线构建，推荐给国内服务器）
+
+服务器访问 GitHub 慢或不通时，不要用在线构建（在线版会在 build 阶段从 GitHub 拉上游产物）。
+先在能下载的机器上准备 `vendor/`，再打包上传：
+
+```bash
+# 1) 在能联网的机器上下载 Linux 版上游产物（可用镜像加速）
+curl -L -o sonovel-linux_x64.tar.gz \
+  https://gh-proxy.com/https://github.com/freeok/so-novel/releases/download/v1.12.0/sonovel-linux_x64.tar.gz
+curl -L -o TomatoNovelDownloader-Linux_amd64-v2.4.16 \
+  https://gh-proxy.com/https://github.com/zhongbai2333/Tomato-Novel-Downloader/releases/download/v2.4.16/TomatoNovelDownloader-Linux_amd64-v2.4.16
+
+# 2) 生成 vendor/（app.jar + rules + 番茄二进制）
+python scripts/prepare_vendor.py --sonovel sonovel-linux_x64.tar.gz \
+    --tomato TomatoNovelDownloader-Linux_amd64-v2.4.16
+
+# 3) 打包上传后在服务器上离线构建
+tar -czf novel-webapp.tar.gz app serve.py requirements.txt scripts \
+    vendor Dockerfile.offline docker-compose.offline.yml docker-entrypoint.sh .env
+scp novel-webapp.tar.gz root@<IP>:/root/
+# 服务器上：
+mkdir -p /opt/novel-webapp && tar -xzf /root/novel-webapp.tar.gz -C /opt/
+cd /opt/novel-webapp && docker compose -f docker-compose.offline.yml up -d --build
+```
+
+`docker-compose.offline.yml` 默认把宿主机 **11252** 映射到容器 8080（按需改 `ports`）。
+镜像只从 Docker Hub 拉 `python:3.12-slim-bookworm` 与 `eclipse-temurin:21-jre`，上游产物全部来自 `vendor/`。
+
 ### 本机运行
 
 ```bash

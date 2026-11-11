@@ -1,0 +1,27 @@
+services:
+  novel-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.offline
+    image: novel-webapp:offline
+    container_name: novel-webapp
+    restart: unless-stopped
+    ports:
+      # 宿主机端口 11252 → 容器内 8080
+      - "11252:8080"
+    environment:
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?请先在 .env 中设置 ADMIN_PASSWORD}"
+      WEBAPP_FILE_TTL_MIN: "${WEBAPP_FILE_TTL_MIN:-120}"
+      WEBAPP_COOKIE_SECURE: "${WEBAPP_COOKIE_SECURE:-0}"
+      WEBAPP_DEFAULT_SOURCE: "${WEBAPP_DEFAULT_SOURCE:-sonovel}"
+      TOMATO_PASSWORD: "${TOMATO_PASSWORD:-webapp-internal}"
+      WEBAPP_TASK_TIMEOUT: "${WEBAPP_TASK_TIMEOUT:-0}"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
