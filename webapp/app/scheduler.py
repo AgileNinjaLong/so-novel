@@ -57,6 +57,7 @@ class Scheduler:
         self._running_task_id: str | None = None
         self._cancels: dict[str, threading.Event] = {}
         self._deliverables: dict[str, Path] = {}
+        self._paused: set[str] = set()
         self._stop = False
         self._thread: threading.Thread | None = None
         self._sweeper: threading.Thread | None = None
@@ -125,11 +126,13 @@ class Scheduler:
                 "mine": mine,
                 "can_cancel": can_manage
                 and task["status"] in {store.STATUS_QUEUED, store.STATUS_RUNNING},
+                "can_pause": can_manage
+                and task["status"] in {store.STATUS_QUEUED, store.STATUS_RUNNING},
                 "can_receive": can_manage and task["status"] == store.STATUS_READY,
                 "can_retry": can_manage
                 and task["status"]
-                in {store.STATUS_DELIVERED, store.STATUS_EXPIRED, store.STATUS_FAILED,
-                    store.STATUS_CANCELED},
+                in {store.STATUS_PAUSED, store.STATUS_DELIVERED, store.STATUS_EXPIRED,
+                    store.STATUS_FAILED, store.STATUS_CANCELED},
             }
             if task["status"] == store.STATUS_QUEUED:
                 item["queue_position"] = positions.get(task["id"], 0)
@@ -193,6 +196,66 @@ class Scheduler:
             self._cv.notify_all()
         return {"task": task, "queue_position": position}
 
+    # ---------------- 暂停（不可续传） --------------
+    def pause(self, task_id: str) -> dict[str, Any]:
+        """暂停 = 终止当前任务且不保留进度；之后只能「重新下载」（重新排队）。
+
+        上游没有可续传的暂停（so-novel 明确无断点续传），因此不做伪续传。
+        """
+        with self._cv:
+            task = store.get_task(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task["status"] == store.STATUS_QUEUED:
+                store.update_task(
+                    task_id,
+                    status=store.STATUS_PAUSED,
+                    finished_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    message="已暂停（尚未开始）；如需下载请「重新下载」重新排队",
+                )
+                self._cv.notify_all()
+                return {"paused": True, "was_running": False}
+            if task["status"] == store.STATUS_READY:
+                self._drop_temp(task_id)
+                store.finish_task(
+                    task_id,
+                    store.STATUS_PAUSED,
+                    message="已暂停并删除临时文件；如需下载请「重新下载」重新排队",
+                )
+                self._cv.notify_all()
+                return {"paused": True, "was_running": False}
+            if task["status"] != store.STATUS_RUNNING:
+                raise ValueError("任务已结束，无法暂停")
+
+            self._paused.add(task_id)
+            event = self._cancels.get(task_id)
+            if event is not None:
+                event.set()
+            plugin = self._plugins.get(task["source"])
+            if plugin is not None:
+                try:
+                    plugin.cancel(task_id)
+                except Exception:
+                    pass
+            store.update_task(task_id, message="正在暂停…")
+            return {"paused": True, "was_running": True}
+
+    def _mark_stopped(self, task_id: str, reason: str = "") -> None:
+        """任务被中断：按是否「暂停」决定最终状态。"""
+        self._drop_temp(task_id)
+        if task_id in self._paused:
+            self._paused.discard(task_id)
+            store.finish_task(
+                task_id,
+                store.STATUS_PAUSED,
+                message="已暂停，进度已丢弃；如需继续请「重新下载」（会重新排队）",
+                error=reason or "已暂停",
+            )
+        else:
+            store.finish_task(
+                task_id, store.STATUS_CANCELED, message="已取消", error=reason or "已取消"
+            )
+
     # ---------------- 取消 / 删除 --------------
     def cancel(self, task_id: str) -> dict[str, Any]:
         with self._cv:
@@ -222,6 +285,7 @@ class Scheduler:
                 return {"canceled": True, "was_running": False}
 
             if task["status"] == store.STATUS_RUNNING:
+                self._paused.discard(task_id)
                 event = self._cancels.get(task_id)
                 if event is not None:
                     event.set()
@@ -457,28 +521,20 @@ class Scheduler:
                 library_dir=str(settings.temp_dir_for(task["id"])),
             )
         except CanceledError:
-            self._drop_temp(task["id"])
-            store.finish_task(
-                task["id"], store.STATUS_CANCELED, message="已取消", error="已取消"
-            )
+            self._mark_stopped(task["id"])
             return
         except Exception as exc:  # noqa: BLE001 - 上游异常统一落库
-            self._drop_temp(task["id"])
             if cancel_event.is_set():
-                store.finish_task(
-                    task["id"], store.STATUS_CANCELED, message="已取消", error=str(exc)[:2000]
-                )
+                self._mark_stopped(task["id"], str(exc)[:2000])
             else:
+                self._drop_temp(task["id"])
                 store.finish_task(
                     task["id"], store.STATUS_FAILED, error=str(exc), message="下载失败"
                 )
             return
 
         if cancel_event.is_set():
-            self._drop_temp(task["id"])
-            store.finish_task(
-                task["id"], store.STATUS_CANCELED, message="已取消", error="已取消"
-            )
+            self._mark_stopped(task["id"])
             return
 
         path = Path(result.file_path) if result.file_path else None

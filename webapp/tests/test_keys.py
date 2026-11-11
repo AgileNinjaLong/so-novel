@@ -1,4 +1,4 @@
-"""单元测试：一钥一用户的邀请密钥（生成、兑换、单次使用、绑定型、撤销）。
+"""单元测试：一钥一账号的密钥（自动/指定账号、单次使用、有效期、撤销、使用后可查账号）。
 
 运行：python tests/test_keys.py
 """
@@ -40,73 +40,77 @@ def expect_http(fn, status: int, label: str) -> None:
 def main() -> int:
     store.init_db()
 
-    print("[1] 批量生成开放型密钥")
-    keys = auth.generate_invite_keys(days=372, count=3, mode="open", created_by="test")
+    print("[1] 管理员生成密钥：账号密码自动生成")
+    keys = auth.generate_invite_keys(days=372, count=3, created_by="test")
     check(len(keys) == 3, "一次生成 3 把")
     check(len({k["key"] for k in keys}) == 3, "密钥互不相同")
     check(all(len(k["key"]) == 21 for k in keys), "每把 21 字符")
-    check(all(k["status"] == "unused" for k in keys), "初始状态为未使用")
-    check(all(k["mode"] == "open" for k in keys), "类型为开放型")
+    check(all(k["username"] and k["password_plain"] for k in keys), "每把都有自动生成的账号密码")
+    check(len({k["username"] for k in keys}) == 3, "账号互不相同")
+    check(all(k["mode"] == "bound" for k in keys), "统一为绑定账号型")
+    check(all(k["status"] == "unused" for k in keys), "初始未使用")
 
-    print("[2] 兑换开放型密钥：用户自填账号密码，获得 372 天")
-    user = auth.redeem_key(keys[0]["key"], "alice", "password123")
-    check(user["username"] == "alice", "账号创建成功")
-    check(validity.remaining_days(user) == 372, "有效期 = 密钥设定的 372 天")
-    check(store.get_invite_key(keys[0]["id"])["status"] == "used", "密钥已标记使用")
-    check(store.get_invite_key(keys[0]["id"])["used_by_name"] == "alice", "记录了使用者")
+    print("[2] 查询密钥：可直接看到账号密码")
+    info = auth.key_public_info(keys[0]["key"], ip="1.1.1.1")
+    check(info["valid"] is True, "未使用密钥有效")
+    check(info["username"] == keys[0]["username"], "返回账号")
+    check(info["password"] == keys[0]["password_plain"], "返回密码")
 
-    print("[3] 同一把密钥不能再用")
-    expect_http(lambda: auth.redeem_key(keys[0]["key"], "alice2", "password123"), 403, "重复兑换被拒绝")
+    print("[3] 激活：账号来自密钥，有效期 = 密钥天数")
+    user = auth.redeem_key(keys[0]["key"], ip="1.1.1.1")
+    check(user["username"] == keys[0]["username"], "创建的账号等于密钥绑定账号")
+    check(validity.remaining_days(user) == 372, "有效期 372 天")
+    check(auth.authenticate(keys[0]["username"], keys[0]["password_plain"], ip="1.1.1.1")["username"] == user["username"],
+          "用密钥里的账号密码可登录")
+    check(store.get_invite_key(keys[0]["id"])["status"] == "used", "密钥标记已使用")
+    check(store.get_invite_key(keys[0]["id"])["used_by_name"] == user["username"], "记录了使用者")
 
-    print("[4] 绑定型密钥：预置账号密码并可在后台查看")
-    bound = auth.generate_invite_keys(
-        days=31,
-        mode="bound",
-        username="bobby",
-        password="bobby-pass-1",
-        note="给老王",
-        created_by="test",
-    )[0]
-    check(bound["mode"] == "bound", "类型为绑定型")
-    check(bound["username"] == "bobby", "预置了用户名")
-    check(bound["password_plain"] == "bobby-pass-1", "保存了可展示的密码")
-    info = auth.key_public_info(bound["key"])
-    check(info["valid"] is True, "前台可查询到该密钥")
-    check(info["mode"] == "bound", "前台识别为绑定型")
-    check(info["username"] == "bobby" and info["password"] == "bobby-pass-1", "前台能看到预置账号密码")
+    print("[4] 同一把密钥不能二次使用")
+    expect_http(lambda: auth.redeem_key(keys[0]["key"], ip="1.1.1.1"), 403, "重复激活被拒绝")
 
-    print("[5] 兑换绑定型密钥（无需再填账号密码）")
-    user2 = auth.redeem_key(bound["key"], "", "")
-    check(user2["username"] == "bobby", "账号为预置用户名")
-    check(validity.remaining_days(user2) == 31, "有效期 = 31 天")
-    check(auth.authenticate("bobby", "bobby-pass-1")["username"] == "bobby", "预置密码可直接登录")
+    print("[5] 已使用的密钥仍显示其账号密码（后台/前台都能看到）")
+    used_info = auth.key_public_info(keys[0]["key"], ip="1.1.1.1")
+    check(used_info["valid"] is False, "已使用密钥不能再用")
+    check(used_info["username"] == keys[0]["username"], "仍返回账号")
+    check(used_info["password"] == keys[0]["password_plain"], "仍返回密码")
+    check(used_info["used_by_name"] == user["username"], "返回使用者")
 
-    print("[6] 绑定型密钥不能批量生成")
-    bound_many = auth.generate_invite_keys(
-        days=1, count=5, mode="bound", username="carol", password="carol-pass-1"
+    print("[6] 管理员指定账号密码：只生成 1 把")
+    named = auth.generate_invite_keys(days=31, count=5, username="boss", password="boss-pass-1")
+    check(len(named) == 1, "指定用户名时只生成 1 把")
+    check(named[0]["username"] == "boss" and named[0]["password_plain"] == "boss-pass-1", "账号密码为管理员指定")
+    u2 = auth.redeem_key(named[0]["key"], ip="2.2.2.2")
+    check(u2["username"] == "boss", "激活后账号为 boss")
+    check(validity.remaining_days(u2) == 31, "有效期 31 天")
+
+    print("[7] 用户名冲突与非法输入")
+    expect_http(
+        lambda: auth.generate_invite_keys(days=1, username="boss", password="x12345678"),
+        409,
+        "用户名已存在时拒绝",
     )
-    check(len(bound_many) == 1, "绑定型只会生成 1 把")
-
-    print("[7] 999999 → 永久")
-    perm_key = auth.generate_invite_keys(days=999999, count=1, mode="open")[0]
-    check(perm_key["permanent"] == 1, "密钥标记为永久")
-    user3 = auth.redeem_key(perm_key["key"], "dave", "password123")
-    check(user3["permanent"] == 1, "账号永久有效")
-    check(validity.remaining_days(user3) is None, "永久账号不显示天数")
-
-    print("[8] 撤销后不可兑换")
-    k = auth.generate_invite_keys(days=31, count=1, mode="open")[0]
-    check(store.revoke_invite_key(k["id"]) is True, "撤销成功")
-    expect_http(lambda: auth.redeem_key(k["key"], "eve", "password123"), 403, "已撤销密钥被拒绝")
-    check(auth.key_public_info(k["key"])["valid"] is False, "前台查询显示不可用")
-
-    print("[9] 错误的档位被拒绝")
+    expect_http(lambda: auth.generate_invite_keys(days=1, username="ab"), 400, "用户名过短被拒绝")
     expect_http(lambda: auth.generate_invite_keys(days=7, count=1), 400, "非预设档位被拒绝")
 
-    print("[10] 密钥碰撞检查：存在性函数生效")
-    existing = store.list_invite_keys()
-    check(len({x["key"] for x in existing}) == len(existing), "库内密钥无重复")
-    check(store.invite_key_code_exists(keys[1]["key"]) is True, "已存在的密钥可被检测到")
+    print("[8] 999999 → 永久")
+    perm = auth.generate_invite_keys(days=999999, count=1)[0]
+    check(perm["permanent"] == 1, "密钥标记永久")
+    u3 = auth.redeem_key(perm["key"], ip="3.3.3.3")
+    check(u3["permanent"] == 1, "账号永久")
+    check(validity.remaining_days(u3) is None, "永久不显示天数")
+
+    print("[9] 撤销与删除")
+    k = auth.generate_invite_keys(days=31, count=1)[0]
+    check(store.revoke_invite_key(k["id"]) is True, "撤销成功")
+    expect_http(lambda: auth.redeem_key(k["key"], ip="4.4.4.4"), 403, "已撤销密钥被拒绝")
+    check(auth.key_public_info(k["key"], ip="4.4.4.4")["valid"] is False, "前台查询不可用")
+    check(store.delete_invite_key(k["id"]) is True, "删除记录成功")
+    check(store.get_invite_key(k["id"]) is None, "记录已不存在")
+
+    print("[10] 密钥唯一性")
+    all_keys = store.list_invite_keys()
+    check(len({x["key"] for x in all_keys}) == len(all_keys), "库内密钥无重复")
+    check(store.invite_key_code_exists(keys[1]["key"]) is True, "已存在密钥可检测")
 
     print()
     if FAILED:

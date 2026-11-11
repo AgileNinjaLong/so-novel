@@ -209,6 +209,40 @@ def main() -> int:
     check(counts.get("running", 0) == 0, "没有遗留 running")
     print(f"  统计: {counts}")
 
+    print("[8] 暂停：丢弃进度、不可续传，只能重新下载（重新排队）")
+    t4 = scheduler.enqueue(
+        source="beta", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="书6", book_ref="b6", fmt="txt",
+    )
+    paused_id = t4["task"]["id"]
+    check(wait_until(lambda: store.get_task(paused_id)["status"] == "running", 10), "任务开始运行")
+    result = scheduler.pause(paused_id)
+    check(result["paused"] is True and result["was_running"] is True, "暂停接口返回运行中")
+    check(wait_until(lambda: store.get_task(paused_id)["status"] == "paused", 20), "任务变为已暂停")
+    row = task_in(scheduler.snapshot(USER_A), paused_id)
+    check(row["can_pause"] is False and row["can_cancel"] is False, "暂停后不能再次暂停/取消")
+    check(row["can_retry"] is True, "暂停后只能重新下载")
+    check(scheduler.deliverable_path(paused_id) is None, "暂停后临时文件已丢弃")
+
+    retried = scheduler.enqueue(
+        source="beta", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="书6", book_ref="b6", fmt="txt",
+    )
+    check(retried["task"]["id"] != paused_id, "重新下载是一个新任务")
+    check(retried["queue_position"] >= 1, "重新下载需要重新排队")
+    check(store.get_task(paused_id)["status"] == "paused", "原任务保持已暂停，不会自动续传")
+    scheduler.cancel(retried["task"]["id"])
+    check(
+        wait_until(lambda: store.get_task(retried["task"]["id"])["status"] == "canceled", 25),
+        "清理重试任务",
+    )
+
+    print("[9] 终态统计（含暂停）")
+    counts = store.task_counts()
+    check(counts.get("paused", 0) >= 1, "存在已暂停任务")
+    check(wait_until(lambda: store.task_counts().get("running", 0) == 0, 25), "没有遗留 running")
+    print(f"  统计: {store.task_counts()}")
+
     scheduler.shutdown()
     print()
     if FAILED:

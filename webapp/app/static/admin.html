@@ -43,7 +43,7 @@
       <h2>生成注册密钥</h2>
       <span class="badge info" id="keyStatBadge"></span>
     </div>
-    <p class="hint">一钥一用户、单次使用；每把密钥自带有效期。开放型由用户自己填账号密码，绑定型由你预置账号密码（会显示在下方列表，便于转交）。</p>
+    <p class="hint">每把密钥对应且只对应一个账号，只能用一次。用户名/密码留空则系统自动生成；填了用户名就只生成 1 把。</p>
     <div class="row">
       <label class="muted">有效期</label>
       <select id="keyDays" style="max-width:150px">
@@ -53,18 +53,14 @@
         <option value="372" selected>372 天</option>
         <option value="999999">永久</option>
       </select>
-      <label class="muted">类型</label>
-      <select id="keyMode" style="max-width:170px">
-        <option value="open">开放型（自填账号）</option>
-        <option value="bound">绑定型（预置账号）</option>
-      </select>
-      <label class="muted" id="keyCountLabel">数量</label>
-      <input id="keyCount" type="text" value="1" style="max-width:90px" title="开放型可一次生成多把">
+      <label class="muted">数量</label>
+      <input id="keyCount" type="text" value="1" style="max-width:90px" title="用户名留空时可一次生成多把">
+      <label class="muted">备注</label>
+      <input id="keyNote" type="text" placeholder="给谁用（可选）" style="flex:1 1 160px">
     </div>
-    <div class="row hidden" id="boundFields">
-      <input id="keyUsername" type="text" placeholder="预置用户名（3-24 位）">
-      <input id="keyPassword" type="password" placeholder="预置密码（≥8 位）">
-      <input id="keyNote" type="text" placeholder="备注（可选，如给谁）">
+    <div class="row">
+      <input id="keyUsername" type="text" placeholder="用户名（留空自动生成）">
+      <input id="keyPassword" type="password" placeholder="密码（留空自动生成，≥8 位）">
     </div>
     <div class="row">
       <button id="genKeyBtn" class="btn primary">生成密钥</button>

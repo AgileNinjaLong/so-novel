@@ -9,8 +9,8 @@
 <body>
 <div class="auth-wrap">
   <div class="card auth-card">
-    <h1>使用密钥注册</h1>
-    <p class="subtitle">每把密钥只能使用一次，自带有效期；绑定型密钥的账号密码由管理员预置。</p>
+    <h1>使用密钥激活</h1>
+    <p class="subtitle">每把密钥只能激活一个账号；账号与密码由管理员生成，激活后即可用它们登录。</p>
     <div id="alert" class="alert bad hidden"></div>
 
     <div class="field">
@@ -23,38 +23,18 @@
 
     <div id="info" class="hidden" style="margin-top:16px">
       <div id="keySummary" class="alert ok"></div>
-
-      <div id="boundBox" class="hidden">
-        <div class="field">
-          <label>预置账号</label>
-          <input id="boundUser" type="text" readonly>
-        </div>
-        <div class="field">
-          <label>预置密码</label>
-          <input id="boundPass" type="text" readonly>
-        </div>
-        <div class="actions">
-          <button id="activateBtn" class="btn primary" style="flex:1">激活并登录</button>
-        </div>
+      <div class="field">
+        <label>账号</label>
+        <input id="account" type="text" readonly>
       </div>
-
-      <div id="openBox" class="hidden">
-        <div class="field">
-          <label for="username">用户名</label>
-          <input id="username" type="text" autocomplete="username" placeholder="3-24 位，可中英文/数字/下划线">
-        </div>
-        <div class="field">
-          <label for="password">密码</label>
-          <input id="password" type="password" autocomplete="new-password" placeholder="8-128 位">
-        </div>
-        <div class="field">
-          <label for="password2">确认密码</label>
-          <input id="password2" type="password" autocomplete="new-password" placeholder="再次输入密码">
-        </div>
-        <div class="actions">
-          <button id="registerBtn" class="btn primary" style="flex:1">注册并登录</button>
-        </div>
+      <div class="field">
+        <label>密码</label>
+        <input id="password" type="text" readonly>
       </div>
+      <div class="actions">
+        <button id="activateBtn" class="btn primary" style="flex:1">激活并登录</button>
+      </div>
+      <p class="hint" style="margin-top:10px">激活后请记下这对账号密码，下次在登录页使用。</p>
     </div>
 
     <p class="switch-line">已有账号？<a href="/login">去登录</a></p>
@@ -97,36 +77,23 @@ async function checkKey() {
     return null;
   });
   if (!data) return;
+  if (!data.valid) {
+    document.getElementById('info').classList.add('hidden');
+    show(data.reason || '密钥不可用');
+    return;
+  }
   keyInfo = data;
   document.getElementById('info').classList.remove('hidden');
-  const bound = data.mode === 'bound';
-  document.getElementById('boundBox').classList.toggle('hidden', !bound);
-  document.getElementById('openBox').classList.toggle('hidden', bound);
-  document.getElementById('keySummary').textContent =
-    `密钥有效 · 有效期 ${data.days_text}` + (bound ? ' · 绑定型（账号密码已预置）' : ' · 开放型（请自填账号密码）');
-  if (bound) {
-    document.getElementById('boundUser').value = data.username || '';
-    document.getElementById('boundPass').value = data.password || '';
-  }
+  document.getElementById('keySummary').textContent = `密钥有效 · 有效期 ${data.days_text}`;
+  document.getElementById('account').value = data.username || '';
+  document.getElementById('password').value = data.password || '';
 }
 
-async function submitRegister(useBound) {
+async function activate() {
   const key = document.getElementById('key').value.trim();
   if (!keyInfo) return show('请先查询密钥');
-  let username = '';
-  let password = '';
-  if (useBound) {
-    username = document.getElementById('boundUser').value;
-    password = document.getElementById('boundPass').value;
-  } else {
-    username = document.getElementById('username').value.trim();
-    password = document.getElementById('password').value;
-    const password2 = document.getElementById('password2').value;
-    if (!username || !password) return show('请填写用户名和密码');
-    if (password !== password2) return show('两次输入的密码不一致');
-  }
   try {
-    await api('/api/auth/register', { method: 'POST', body: { key, username, password } });
+    await api('/api/auth/register', { method: 'POST', body: { key } });
     location.href = '/';
   } catch (err) {
     show(err.message);
@@ -135,8 +102,7 @@ async function submitRegister(useBound) {
 
 document.getElementById('checkBtn').addEventListener('click', checkKey);
 document.getElementById('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkKey(); });
-document.getElementById('activateBtn').addEventListener('click', () => submitRegister(true));
-document.getElementById('registerBtn').addEventListener('click', () => submitRegister(false));
+document.getElementById('activateBtn').addEventListener('click', activate);
 
 fetch('/api/meta').then((r) => r.json()).then((meta) => {
   if (!meta.app.registration_open) show('当前没有可用密钥：管理员尚未生成，或已全部用完', 'bad');

@@ -115,11 +115,12 @@ async def api_register(request: Request, payload: dict[str, Any] = Body(...)):
     password = str(payload.get("password") or "")
     if not key:
         raise HTTPException(status_code=400, detail="请填写注册密钥")
-    info = await run_in_threadpool(auth.key_public_info, key)
+    ip = auth.client_ip(request)
+    info = await run_in_threadpool(auth.key_public_info, key, ip=ip)
     if not info.get("valid"):
         raise HTTPException(status_code=403, detail=info.get("reason") or "密钥不可用")
     user = await run_in_threadpool(
-        auth.redeem_key, key, username, password, ip=auth.client_ip(request)
+        auth.redeem_key, key, username, password, ip=ip
     )
     token, ttl = auth.issue_session(user, request)
     return _set_session(
@@ -128,9 +129,11 @@ async def api_register(request: Request, payload: dict[str, Any] = Body(...)):
 
 
 @app.get("/api/auth/key-info")
-async def api_key_info(key: str):
-    """注册页先查询密钥类型：开放型需自填账号密码，绑定型直接给预置账号。"""
-    return await run_in_threadpool(auth.key_public_info, key)
+async def api_key_info(request: Request, key: str):
+    """注册页先查询密钥：一钥一账号，直接返回对应的账号密码。"""
+    return await run_in_threadpool(
+        auth.key_public_info, key, ip=auth.client_ip(request)
+    )
 
 
 @app.post("/api/auth/login")
@@ -346,6 +349,23 @@ async def api_download(request: Request, task_id: str):
     )
 
 
+@app.post("/api/tasks/{task_id}/pause")
+async def api_pause_task(request: Request, task_id: str):
+    """暂停：终止任务并丢弃进度；之后只能「重新下载」（重新排队）。"""
+    user = request.state.user
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task["user_id"] != user["id"] and user["role"] != store.ROLE_ADMIN:
+        raise HTTPException(status_code=403, detail="只能暂停自己的任务")
+    try:
+        return state["scheduler"].pause(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+
 @app.post("/api/tasks/{task_id}/retry")
 async def api_retry_task(request: Request, task_id: str):
     """按原参数重新排队（文件已被接收或过期后使用）。"""
@@ -387,6 +407,7 @@ async def api_cleanup(request: Request, payload: dict[str, Any] | None = Body(de
 async def api_admin_overview(request: Request):
     auth.require_admin(request)
     scheduler: Scheduler = state["scheduler"]
+    keys = store.list_invite_keys(limit=50)
     return {
         "users": [_admin_user_view(u) for u in store.list_users()],
         "user_count": store.count_users(),
@@ -395,7 +416,9 @@ async def api_admin_overview(request: Request):
         "queue_length": len(store.queued_tasks()),
         "grant_presets": list(validity.GRANT_PRESETS),
         "max_days": validity.MAX_DAYS,
-        "keys": [_key_view(k) for k in store.list_invite_keys()],
+        # 只回传最近 50 把，避免后台页面无限增长
+        "keys": [_key_view(k) for k in keys],
+        "key_total": len(store.list_invite_keys(limit=1000)),
         "key_stats": store.invite_key_stats(),
         "file_ttl_min": settings.file_ttl_min,
         "storage_mode": "stream-and-delete",
@@ -425,18 +448,17 @@ async def api_admin_create_keys(request: Request, payload: dict[str, Any] = Body
         count = int(payload.get("count") or 1)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="count 必须是整数")
-    mode = str(payload.get("mode") or "open")
+    mode = str(payload.get("mode") or "bound")
     created = await run_in_threadpool(
         auth.generate_invite_keys,
         days=days,
         count=count,
-        mode=mode,
         username=str(payload.get("username") or ""),
         password=str(payload.get("password") or ""),
         note=str(payload.get("note") or ""),
         created_by=admin["username"],
     )
-    return {"keys": [_key_view(k) for k in created]}
+    return {"keys": [_key_view(k) for k in created], "mode": mode}
 
 
 @app.delete("/api/admin/keys/{key_id}")
@@ -546,9 +568,7 @@ def _key_view(row: dict[str, Any]) -> dict[str, Any]:
 
 def _admin_user_view(user: dict[str, Any]) -> dict[str, Any]:
     view = auth.user_public(user)
-    view["task_count"] = len(
-        [t for t in store.list_tasks(limit=1000) if t.get("user_id") == user["id"]]
-    )
+    view["task_count"] = store.count_tasks_for_user(user["id"])
     return view
 
 

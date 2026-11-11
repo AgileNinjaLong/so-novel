@@ -72,15 +72,10 @@ def wait_until(fn, timeout: float = 90.0, interval: float = 0.8) -> bool:
 
 
 def signup_key(client: httpx.Client, admin: httpx.Client, days: int) -> dict:
-    """管理员生成一把开放型密钥，新用户用它注册（有效期随密钥）。"""
-    key = api(admin, "POST", "/api/admin/keys", json={"days": days, "count": 1, "mode": "open"})["keys"][0]
-    name = f"u{uuid.uuid4().hex[:8]}"
-    user = api(
-        client,
-        "POST",
-        "/api/auth/register",
-        json={"key": key["key"], "username": name, "password": "password123"},
-    )["user"]
+    """管理员生成一把「一钥一账号」的密钥，新用户用它激活（有效期随密钥）。"""
+    key = api(admin, "POST", "/api/admin/keys", json={"days": days, "count": 1})["keys"][0]
+    user = api(client, "POST", "/api/auth/register", json={"key": key["key"]})["user"]
+    user["_key"] = key
     return user
 
 
@@ -104,17 +99,31 @@ def main() -> int:
     for plugin in meta["plugins"]:
         check(plugin["ready"], f"{plugin['name']} 就绪（{plugin['status_detail']}）")
 
-    print("[2] 用两把密钥注册两个用户")
+    print("[2] 用两把密钥激活两个用户")
     alice = make_client()
     bob = make_client()
     user_a = signup_key(alice, admin, 372)
     user_b = signup_key(bob, admin, 31)
-    check(user_a["username"].startswith("u"), "用户A 注册成功")
+    check(user_a["username"] == user_a["_key"]["username"], "用户A 账号来自密钥")
     check(user_a["remaining_days"] == 372, "用户A 有效期来自密钥（372 天）")
     check(user_b["remaining_days"] == 31, "用户B 有效期来自密钥（31 天）")
     keys = api(admin, "GET", "/api/admin/keys")["keys"]
     used = [k for k in keys if k["status"] == "used"]
     check(len(used) >= 2, "两把密钥都已标记使用")
+    ours = [k for k in keys if k["key"] in {user_a["_key"]["key"], user_b["_key"]["key"]}]
+    check(len(ours) == 2, "能在后台找到本轮生成的两把密钥")
+    check(all(k["username"] and k["password"] for k in ours), "已用密钥仍显示账号密码")
+    check(all(k["used_by_name"] for k in ours), "已用密钥显示使用者")
+
+    print("[2b] so-novel 聚合搜索可用（借用其 Web 接口）")
+    if state(alice)["active_source"] != "sonovel":
+        api(alice, "POST", "/api/source", json={"source": "sonovel", "mode": "cancel_now"})
+    found = api(alice, "GET", "/api/search", params={"q": "活着"})
+    check(len(found["items"]) > 0, "搜索返回结果")
+    check(
+        all(item["book_ref"].startswith("http") for item in found["items"][:5]),
+        "结果带详情页链接（可直接喂给 CLI）",
+    )
 
     print("[3] 单线程队列与排队位置")
     if state(alice)["active_source"] != "sonovel":
@@ -193,7 +202,21 @@ def main() -> int:
     check(overview["storage_mode"] == "stream-and-delete", "后台标明不在服务器留存")
     check(len(overview["tasks"]) >= 3, "后台能看到任务记录")
 
-    print("[8] 禁用用户 B 后会话失效")
+    print("[8] 暂停 → 只能重新下载（重新排队）")
+    api(carol, "POST", "/api/source", json={"source": "sonovel", "mode": "cancel_now"})
+    t4 = api(carol, "POST", "/api/tasks", json={
+        "source": "sonovel", "title": "临渊行", "book_ref": BOOK_LONG, "fmt": "txt"})["task"]["id"]
+    check(wait_until(lambda: task_by_id(state(carol), t4)["status"] == "running", 60), "长任务开始运行")
+    api(carol, "POST", f"/api/tasks/{t4}/pause")
+    check(wait_until(lambda: task_by_id(state(carol), t4)["status"] == "paused", 90), "暂停生效")
+    paused_row = task_by_id(state(carol), t4)
+    check(paused_row["can_pause"] is False and paused_row["can_retry"] is True, "暂停后只能重新下载")
+    retried = api(carol, "POST", f"/api/tasks/{t4}/retry")["task"]["id"]
+    check(retried != t4, "重新下载会创建新任务")
+    check(api(carol, "GET", f"/api/tasks/{retried}")["status"] in {"queued", "running"}, "新任务重新排队")
+    api(carol, "DELETE", f"/api/tasks/{retried}")
+
+    print("[9] 禁用用户 B 后会话失效")
     api(admin, "POST", f"/api/admin/users/{user_b['id']}/status", json={"status": "banned"})
     check(bob.get("/api/state").status_code == 401, "B 的会话已失效")
 

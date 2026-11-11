@@ -256,8 +256,16 @@ async function enqueue() {
       title = title || state.picked.title;
     } else {
       const typed = $('#searchBox').value.trim();
-      if (/^\d{6,}$/.test(typed)) { ref = typed; title = title || `book ${typed}`; }
-      else return showMsg('请先搜索并选择一本书，或直接在搜索框粘贴 book_id', 'bad');
+      if (/^https?:\/\//i.test(typed)) {
+        // 搜索框里直接粘贴详情页链接，跳过搜索
+        ref = typed;
+        title = title || typed;
+      } else if (/^\d{6,}$/.test(typed)) {
+        ref = typed;
+        title = title || `book ${typed}`;
+      } else {
+        return showMsg('请先搜索并选择一本书，或直接把详情页链接粘到搜索框', 'bad');
+      }
     }
   } else {
     ref = $('#urlBox').value.trim();
@@ -354,8 +362,13 @@ function renderTasks(snap) {
 
     const actions = el('td', 'action-cell');
     actions.dataset.label = '操作';
+    if (t.can_pause) {
+      const pause = el('button', 'btn small', '暂停');
+      pause.addEventListener('click', () => pauseTask(t.id));
+      actions.appendChild(pause);
+    }
     if (t.can_cancel) {
-      const cancel = el('button', 'btn small', t.status === 'running' ? '取消下载' : '取消排队');
+      const cancel = el('button', 'btn small', '取消');
       cancel.addEventListener('click', () => cancelTask(t.id));
       actions.appendChild(cancel);
     }
@@ -369,7 +382,7 @@ function renderTasks(snap) {
       retry.addEventListener('click', () => retryTask(t.id));
       actions.appendChild(retry);
     }
-    if (!t.can_cancel && !t.can_receive && !t.can_retry) {
+    if (!t.can_cancel && !t.can_pause && !t.can_receive && !t.can_retry) {
       actions.appendChild(el('span', 'muted', '—'));
     }
     tr.appendChild(actions);
@@ -383,6 +396,7 @@ function statusTag(t) {
     running: ['running', '下载中'],
     ready: ['ready', '待接收'],
     delivered: ['delivered', '已接收'],
+    paused: ['paused', '已暂停'],
     expired: ['expired', '已过期'],
     failed: ['failed', '失败'],
     canceled: ['canceled', '已取消'],
@@ -393,8 +407,16 @@ function statusTag(t) {
   return el('span', 'tag ' + cls, label);
 }
 
-async function retryTask(id) {
+async function pauseTask(id) {
+  if (!confirm('暂停会丢弃当前进度，之后只能「重新下载」（重新排队）。继续？')) return;
   try {
+    const data = await api(`/api/tasks/${id}/pause`, { method: 'POST' });
+    showMsg(data.was_running ? '正在暂停…' : '已暂停', 'ok');
+    await refresh();
+  } catch (err) { showMsg(err.message, 'bad'); }
+}
+
+async function retryTask(id) {  try {
     const data = await api(`/api/tasks/${id}/retry`, { method: 'POST' });
     showMsg(`已重新排队${data.queue_position ? `，第 ${data.queue_position} 位` : ''}`, 'ok');
     await refresh();

@@ -52,7 +52,8 @@ function renderStats() {
   $('#taskBadge').textContent = `共 ${total} 条`;
   const stats = overview.key_stats || {};
   $('#keyStatBadge').textContent =
-    `未用 ${stats.unused || 0} · 已用 ${stats.used || 0} · 撤销 ${stats.revoked || 0}`;
+    `未用 ${stats.unused || 0} · 已用 ${stats.used || 0} · 撤销 ${stats.revoked || 0}` +
+    (overview.key_total > 50 ? ` · 共 ${overview.key_total} 把（显示最近 50）` : '');
 }
 
 /* ---------------- 密钥 ---------------- */
@@ -72,12 +73,10 @@ function renderKeys() {
   keys.forEach((k) => {
     const card = el('div', 'user-card');
     const head = el('div', 'head');
-    const title = el('span', 'name', k.mode === 'bound' ? '绑定型密钥' : '开放型密钥');
-    head.appendChild(title);
+    head.appendChild(el('span', 'name', `密钥 · ${k.username || '（无账号）'}`));
     const tags = el('div', 'tag-row');
     tags.appendChild(el('span', 'badge ' + (k.status === 'unused' ? 'ok' : k.status === 'used' ? 'info' : 'warn'), keyStatusText(k.status)));
     tags.appendChild(el('span', 'badge', k.days_text));
-    if (k.mode === 'bound') tags.appendChild(el('span', 'badge info', '绑定账号'));
     head.appendChild(tags);
     card.appendChild(head);
 
@@ -85,27 +84,25 @@ function renderKeys() {
     code.style.marginTop = '8px';
     card.appendChild(code);
 
+    const creds = el('div', 'meta', `账号：${k.username || '—'}　密码：${k.password || '—'}`);
+    creds.style.color = 'var(--text)';
+    card.appendChild(creds);
+
     const meta = el('div', 'meta',
       `生成：${(k.created_at || '').slice(0, 16).replace('T', ' ')}` +
+      (k.used_at ? `　使用：${String(k.used_at).slice(0, 16).replace('T', ' ')}` : '') +
       (k.used_by_name ? `　使用者：${k.used_by_name}` : '') +
       (k.note ? `　备注：${k.note}` : ''));
     card.appendChild(meta);
-
-    if (k.mode === 'bound') {
-      const creds = el('div', 'meta', `预置账号：${k.username}　预置密码：${k.password}`);
-      creds.style.color = 'var(--text)';
-      card.appendChild(creds);
-    }
 
     const ops = el('div', 'ops');
     const copy = el('button', 'btn small', '复制密钥');
     copy.addEventListener('click', () => copyText(k.key, copy));
     ops.appendChild(copy);
-    if (k.mode === 'bound' && k.username) {
-      const copyAll = el('button', 'btn small', '复制账号+密码');
-      copyAll.addEventListener('click', () => copyText(`账号：${k.username}\n密码：${k.password}\n密钥：${k.key}`, copyAll));
-      ops.appendChild(copyAll);
-    }
+    const copyAll = el('button', 'btn small', '复制账号+密码+密钥');
+    copyAll.addEventListener('click', () => copyText(
+      `账号：${k.username}\n密码：${k.password}\n密钥：${k.key}`, copyAll));
+    ops.appendChild(copyAll);
     if (k.status === 'unused') {
       const revoke = el('button', 'btn small ghost', '撤销');
       revoke.addEventListener('click', () => revokeKey(k));
@@ -132,18 +129,10 @@ async function copyText(text, btn) {
 
 async function genKeys() {
   const days = Number($('#keyDays').value);
-  const mode = $('#keyMode').value;
-  const count = mode === 'bound' ? 1 : Math.max(1, Math.min(20, Number($('#keyCount').value) || 1));
-  const body = { days, count, mode };
-  if (mode === 'bound') {
-    body.username = $('#keyUsername').value.trim();
-    body.password = $('#keyPassword').value;
-    body.note = $('#keyNote').value.trim();
-    if (!body.username || !body.password) {
-      showKeyMsg('绑定型密钥需要填写预置的用户名和密码', 'bad');
-      return;
-    }
-  }
+  const username = $('#keyUsername').value.trim();
+  const password = $('#keyPassword').value;
+  const count = username ? 1 : Math.max(1, Math.min(20, Number($('#keyCount').value) || 1));
+  const body = { days, count, username, password, note: $('#keyNote').value.trim() };
   $('#genKeyBtn').disabled = true;
   try {
     const data = await api('/api/admin/keys', { method: 'POST', body });
@@ -271,8 +260,8 @@ async function removeUser(user) {
 
 function statusLabel(t) {
   const map = {
-    queued: '排队中', running: '下载中', ready: '待接收',
-    delivered: '已接收', failed: '失败', canceled: '已取消', expired: '已过期',
+    queued: '排队中', running: '下载中', ready: '待接收', delivered: '已接收',
+    paused: '已暂停', failed: '失败', canceled: '已取消', expired: '已过期',
   };
   return map[t.status] || t.status;
 }
@@ -358,14 +347,6 @@ function showTaskMsg(text, kind) {
 }
 
 /* ---------------- 绑定 ---------------- */
-
-$('#keyMode').addEventListener('change', () => {
-  const bound = $('#keyMode').value === 'bound';
-  $('#boundFields').classList.toggle('hidden', !bound);
-  $('#keyCount').disabled = bound;
-  $('#keyCountLabel').classList.toggle('muted', true);
-  if (bound) $('#keyCount').value = '1';
-});
 
 $('#genKeyBtn').addEventListener('click', genKeys);
 $('#refreshBtn').addEventListener('click', load);

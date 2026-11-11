@@ -24,11 +24,14 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from ..config import settings
 from . import _ini
@@ -37,24 +40,27 @@ from .base import CanceledError, Capabilities, DownloadResult, PluginStatus, Sea
 
 TOTAL_RE = re.compile(r"共计\s*(\d+)\s*章")
 TITLE_RE = re.compile(r"开始下载[:：]\s*[《<]\s*(.+?)\s*[》>]\s*[(（]\s*(.*?)\s*[)）]")
-CHAPTER_FILE_RE = re.compile(r"^\d+_.*\.(txt|html)$")
+CHAPTER_FILE_RE = re.compile(r"^\d+_.*(txt|html)$")
 
 
 class SoNovelPlugin:
     id = "sonovel"
     name = "so-novel"
-    description = "免费开源的多书源小说下载器（Java），按详情页链接下载，支持 txt/epub/html/pdf。"
+    description = "免费开源的多书源小说下载器（Java）。搜索用其 Web 接口，下载用其 CLI。"
     upstream = "https://github.com/freeok/so-novel"
     capabilities = Capabilities(
-        search=False,
-        input_hint="该来源的 CLI 只接受「书籍详情页链接」，请粘贴链接；格式可选 txt / epub / html / pdf。",
+        search=True,
+        input_hint="可输入书名搜索（聚合它自带的 13 个书源），也可以直接粘贴书籍详情页链接。",
         formats=["epub", "txt", "html", "pdf"],
-        notes="由 Java CLI 驱动（-Dmode=cli），产物在独立目录生成，不依赖其 Web 服务。",
+        notes="搜索：临时启动上游 -Dmode=web 的 /search/aggregated；下载：-Dmode=cli。",
     )
 
     def __init__(self) -> None:
         self._procs: dict[str, subprocess.Popen] = {}
         self._lock = threading.Lock()
+        self._search_proc: subprocess.Popen | None = None
+        self._search_port: int | None = None
+        self._search_lock = threading.Lock()
 
     # ---------------- 状态 ----------------
     def _work_dir(self) -> Path:
@@ -120,9 +126,106 @@ class SoNovelPlugin:
             )
         return PluginStatus(True, f"CLI 就绪：{jar.name}")
 
-    # ---------------- 搜索（CLI 不支持） ----------------
+    # ---------------- 搜索（借用上游 Web 模式的聚合搜索） ----------------
     def search(self, query: str) -> list[SearchItem]:
-        raise RuntimeError("so-novel 的 CLI 模式不支持搜索，请直接粘贴书籍详情页链接")
+        """调用上游 `-Dmode=web` 的 /search/aggregated，返回带详情页链接的结果。"""
+        status = self.status()
+        if not status.ready:
+            raise RuntimeError(status.detail)
+        query = query.strip()
+        if not query:
+            return []
+        base = self._ensure_search_server()
+        try:
+            resp = httpx.get(
+                f"{base}/search/aggregated",
+                params={"kw": query, "searchLimit": 30},
+                timeout=90.0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"搜索请求失败：{exc}")
+        try:
+            data = resp.json()
+        except Exception:
+            raise RuntimeError(f"搜索结果不是合法 JSON（HTTP {resp.status_code}）")
+        code = data.get("code")
+        if code != 200:
+            raise RuntimeError(str(data.get("message") or f"搜索失败（code={code}）"))
+        items: list[SearchItem] = []
+        for row in data.get("data") or []:
+            url = str(row.get("url") or "").strip()
+            if not url:
+                continue
+            items.append(
+                SearchItem(
+                    title=str(row.get("bookName") or "").strip(),
+                    author=str(row.get("author") or "").strip(),
+                    book_ref=url,
+                    extra={
+                        "source": row.get("sourceName"),
+                        "latest_chapter": row.get("latestChapter"),
+                        "updated": row.get("lastUpdateTime"),
+                    },
+                )
+            )
+        return items
+
+    def _ensure_search_server(self) -> str:
+        """按需启动一个 web 模式 JVM 专门做搜索（与下载用的 CLI 进程互不影响）。"""
+        with self._search_lock:
+            if self._search_proc is not None and self._search_proc.poll() is None:
+                if self._search_port and self._port_alive(self._search_port):
+                    return f"http://127.0.0.1:{self._search_port}"
+
+            work = self._work_dir()
+            port = self._free_port()
+            config_path = work / "search.ini"
+            _write_search_config(config_path, port, work)
+            argv = [
+                self._java_path() or settings.sonovel_java,
+                "-Dmode=web",
+                f"-Dconfig.file={config_path}",
+                "-Dfile.encoding=UTF-8",
+                "-jar",
+                str(self._jar_path()),
+            ]
+            proc = spawn(argv, cwd=str(work), env=dict(os.environ))
+            self._search_proc = proc
+            self._search_port = port
+
+            deadline = time.time() + 90
+            while time.time() < deadline:
+                if proc.poll() is not None:
+                    self._search_proc = None
+                    raise RuntimeError("so-novel 搜索服务启动失败，请检查日志")
+                if self._port_alive(port):
+                    return f"http://127.0.0.1:{port}"
+                time.sleep(0.5)
+            terminate_tree(proc)
+            self._search_proc = None
+            raise RuntimeError("so-novel 搜索服务在 90 秒内未就绪")
+
+    @staticmethod
+    def _free_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    @staticmethod
+    def _port_alive(port: int) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+                return True
+        except OSError:
+            return False
+
+    def _stop_search_server(self) -> None:
+        proc = self._search_proc
+        self._search_proc = None
+        self._search_port = None
+        if proc is not None:
+            terminate_tree(proc)
+            (self._work_dir() / "search.ini").unlink(missing_ok=True)
 
     # ---------------- 下载 ----------------
     def download(
@@ -293,11 +396,48 @@ class SoNovelPlugin:
             terminate_tree(proc)
 
     def shutdown(self) -> None:
+        self._stop_search_server()
         with self._lock:
             procs = list(self._procs.values())
             self._procs.clear()
         for proc in procs:
             terminate_tree(proc)
+
+
+def _write_search_config(path: Path, port: int, work: Path) -> None:
+    """生成仅用于搜索的配置：打开 web 模式、指定端口。"""
+    text = "\n".join(
+        [
+            "[global]",
+            "auto-update = 0",
+            "",
+            "[download]",
+            f"download-path = {work / 'runtime-search-tmp'}",
+            "extname = epub",
+            "",
+            "[source]",
+            "active-rules = main.json",
+            "search-limit = 30",
+            "search-filter = 1",
+            "",
+            "[crawl]",
+            "concurrency = 4",
+            "",
+            "[web]",
+            "enabled = 1",
+            f"port = {port}",
+            "",
+            "[cookie]",
+            "qidian =",
+            "",
+            "[proxy]",
+            "enabled = 0",
+            "host = 127.0.0.1",
+            "port = 7890",
+            "",
+        ]
+    )
+    path.write_text(text, encoding="utf-8")
 
 
 # ---------------- 辅助函数 ----------------

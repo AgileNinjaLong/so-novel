@@ -34,19 +34,19 @@ def session_cookies(client: httpx.Client) -> list[dict]:
 
 
 def prepare() -> dict:
-    """准备：一把开放型密钥、一个带有效期的用户、一个待接收任务。"""
+    """准备：一把自动账号密钥、一把指定账号密钥、一个带有效期的用户、一个待接收任务。"""
     admin = httpx.Client(base_url=BASE, timeout=30)
     admin.post("/api/auth/login", json={"username": ADMIN_USER, "password": ADMIN_PASS})
-    key = admin.post("/api/admin/keys", json={"days": 372, "count": 1, "mode": "open"}).json()["keys"][0]
-    bound = admin.post(
+    key = admin.post("/api/admin/keys", json={"days": 372, "count": 1}).json()["keys"][0]
+    demo_key = admin.post("/api/admin/keys", json={"days": 372, "count": 1}).json()["keys"][0]
+    named = admin.post(
         "/api/admin/keys",
-        json={"days": 31, "mode": "bound", "username": f"demo{uuid.uuid4().hex[:4]}",
+        json={"days": 31, "username": f"demo{uuid.uuid4().hex[:4]}",
               "password": "demo-pass-1", "note": "演示账号"},
     ).json()["keys"][0]
 
     user = httpx.Client(base_url=BASE, timeout=180)
-    name = f"user{uuid.uuid4().hex[:4]}"
-    user.post("/api/auth/register", json={"key": key["key"], "username": name, "password": "password123"})
+    user.post("/api/auth/register", json={"key": key["key"]})
     try:
         user.post("/api/source", json={"source": "sonovel", "mode": "cancel_now"})
         task = user.post("/api/tasks", json={
@@ -58,10 +58,10 @@ def prepare() -> dict:
         "admin_cookies": session_cookies(admin),
         "user": user,
         "user_cookies": session_cookies(user),
-        "open_key": key["key"],
-        "bound_key": bound["key"],
+        "open_key": demo_key["key"],
+        "bound_key": named["key"],
         "task": task,
-        "username": name,
+        "username": key["username"],
     }
 
 

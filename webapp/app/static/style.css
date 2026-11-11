@@ -169,6 +169,7 @@ tbody tr:hover { background: #fafbff; }
 .tag.queued { background: #eef2ff; color: #3b5bdb; }
 .tag.running { background: #e7f7ee; color: var(--ok); }
 .tag.ready { background: #fff4e0; color: #b45309; }
+.tag.paused { background: #f1f0ff; color: #6d5ce0; }
 .tag.delivered { background: #e6f6ec; color: #15803d; }
 .tag.expired { background: #f3f4f6; color: #9aa1ac; }
 .tag.success { background: #e6f6ec; color: var(--ok); }

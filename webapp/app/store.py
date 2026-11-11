@@ -13,12 +13,13 @@ from .config import settings
 
 # 任务状态：
 # queued(排队中) -> running(下载中) -> ready(待接收) -> delivered(已交付)
-# 另有 failed / canceled / expired(未接收已清理)
+# paused(已暂停，只能重新下载) / failed / canceled / expired(未接收已清理)
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
 STATUS_READY = "ready"
 STATUS_DELIVERED = "delivered"
 STATUS_SUCCESS = "delivered"  # 兼容旧代码/测试里的命名
+STATUS_PAUSED = "paused"
 STATUS_FAILED = "failed"
 STATUS_CANCELED = "canceled"
 STATUS_EXPIRED = "expired"
@@ -107,7 +108,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS invite_keys (
                 id TEXT PRIMARY KEY,
                 key TEXT NOT NULL UNIQUE,
-                mode TEXT NOT NULL DEFAULT 'open',
+                mode TEXT NOT NULL DEFAULT 'bound',
                 days INTEGER NOT NULL DEFAULT 0,
                 permanent INTEGER NOT NULL DEFAULT 0,
                 username TEXT,
@@ -119,6 +120,14 @@ def init_db() -> None:
                 used_at TEXT,
                 used_by TEXT,
                 used_by_name TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS throttle (
+                scope_key TEXT PRIMARY KEY,
+                fail_count INTEGER NOT NULL DEFAULT 0,
+                window_start REAL NOT NULL DEFAULT 0,
+                locked_until REAL NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL DEFAULT 0
             );
             """
         )
@@ -591,6 +600,31 @@ def recover_after_restart() -> list[str]:
     return ids
 
 
+def count_tasks_for_user(user_id: str) -> int:
+    with _lock:
+        row = _connection().execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return int(row["c"])
+
+
+def purge_all_non_admin() -> dict[str, int]:
+    """维护脚本用：清空所有非管理员用户、密钥与任务记录（不删文件，稍后统一清临时目录）。"""
+    with _lock:
+        conn = _connection()
+        users = conn.execute(
+            "SELECT id FROM users WHERE role != ?", (ROLE_ADMIN,)
+        ).fetchall()
+        ids = [row["id"] for row in users]
+        for user_id in ids:
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        keys = conn.execute("DELETE FROM invite_keys").rowcount
+        tasks = conn.execute("DELETE FROM tasks").rowcount
+        conn.commit()
+    return {"users": len(ids), "keys": int(keys or 0), "tasks": int(tasks or 0)}
+
+
 def task_counts() -> dict[str, int]:
     with _lock:
         rows = _connection().execute(
@@ -608,6 +642,7 @@ def purge_tasks(statuses: Iterable[str]) -> list[dict[str, Any]]:
         in {
             STATUS_FAILED,
             STATUS_CANCELED,
+            STATUS_PAUSED,
             STATUS_DELIVERED,
             STATUS_EXPIRED,
         }
@@ -756,3 +791,53 @@ def invite_key_stats() -> dict[str, int]:
             "SELECT status, COUNT(*) AS c FROM invite_keys GROUP BY status"
         ).fetchall()
     return {row["status"]: int(row["c"]) for row in rows}
+
+
+# ---------------- 暴力破解防护（持久化计数） ----------------
+
+
+def throttle_state(scope_key: str) -> dict[str, Any]:
+    with _lock:
+        row = _connection().execute(
+            "SELECT * FROM throttle WHERE scope_key = ?", (scope_key,)
+        ).fetchone()
+    if row is None:
+        return {"scope_key": scope_key, "fail_count": 0, "window_start": 0.0,
+                "locked_until": 0.0, "updated_at": 0.0}
+    return dict(row)
+
+
+def throttle_upsert(
+    scope_key: str, *, fail_count: int, window_start: float, locked_until: float
+) -> None:
+    with _lock:
+        conn = _connection()
+        conn.execute(
+            """
+            INSERT INTO throttle(scope_key, fail_count, window_start, locked_until, updated_at)
+            VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(scope_key) DO UPDATE SET
+                fail_count = excluded.fail_count,
+                window_start = excluded.window_start,
+                locked_until = excluded.locked_until,
+                updated_at = excluded.updated_at
+            """,
+            (scope_key, int(fail_count), float(window_start), float(locked_until), time.time()),
+        )
+        conn.commit()
+
+
+def throttle_clear(scope_key: str) -> None:
+    with _lock:
+        conn = _connection()
+        conn.execute("DELETE FROM throttle WHERE scope_key = ?", (scope_key,))
+        conn.commit()
+
+
+def throttle_purge_stale(older_than_seconds: float = 7 * 24 * 3600) -> int:
+    cutoff = time.time() - older_than_seconds
+    with _lock:
+        conn = _connection()
+        cur = conn.execute("DELETE FROM throttle WHERE updated_at < ?", (cutoff,))
+        conn.commit()
+    return int(cur.rowcount or 0)
