@@ -40,6 +40,7 @@ async function load() {
   renderKeys();
   renderUsers();
   renderTasks();
+  updateKeySummary();
 }
 
 function renderStats() {
@@ -132,14 +133,34 @@ async function copyText(text, btn) {
   }
 }
 
+function currentKeyDays() {
+  const raw = $('#keyDays').value;
+  if (raw === 'custom') {
+    const custom = Number($('#keyCustomDays').value);
+    return Number.isFinite(custom) && custom > 0 ? Math.min(65535, Math.floor(custom)) : 0;
+  }
+  return Number(raw);
+}
+
+function updateKeySummary() {
+  const days = currentKeyDays();
+  const count = Math.max(1, Math.min(20, Number($('#keyCount').value) || 1));
+  const daysText = days === 999999 ? '永久' : days > 0 ? `${days} 天` : '（请填写自定义天数）';
+  $('#keySummaryHint').textContent = `将生成 ${count} 把 · 每把 ${daysText}`;
+}
+
 async function genKeys() {
-  const days = Number($('#keyDays').value);
+  const days = currentKeyDays();
+  if (!days) {
+    showKeyMsg('请选择有效期，或填写自定义天数（1-65535）', 'bad');
+    return;
+  }
   const count = Math.max(1, Math.min(20, Number($('#keyCount').value) || 1));
   const body = { days, count, note: $('#keyNote').value.trim() };
   $('#genKeyBtn').disabled = true;
   try {
     const data = await api('/api/admin/keys', { method: 'POST', body });
-    showKeyMsg(`已生成 ${data.keys.length} 把密钥`, 'ok');
+    showKeyMsg(`已生成 ${data.keys.length} 把密钥（每把 ${days === 999999 ? '永久' : days + ' 天'}）`, 'ok');
     await load();
   } catch (err) {
     showKeyMsg(err.message, 'bad');
@@ -316,9 +337,9 @@ function renderTasks() {
       ops.appendChild(btn);
     }
     if (t.can_receive) {
-      const a = el('a', 'btn small primary', '接收');
-      a.href = `/api/tasks/${t.id}/download`;
-      ops.appendChild(a);
+      const btn = el('button', 'btn small primary', '接收');
+      btn.addEventListener('click', () => receiveTask(t, btn));
+      ops.appendChild(btn);
     }
     if (!t.can_cancel && !t.can_receive) {
       ops.appendChild(el('span', 'muted', '—'));
@@ -326,6 +347,39 @@ function renderTasks() {
     tr.appendChild(ops);
     tbody.appendChild(tr);
   });
+}
+
+async function receiveTask(t, btn) {
+  const ttl = (overview && overview.file_ttl_min) || 120;
+  if (!confirm(`接收《${t.title}》？完整下载后服务器会删除临时文件；若失败则保留 ${ttl} 分钟可重试。`)) return;
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '接收中…';
+  try {
+    const resp = await fetch(`/api/tasks/${t.id}/download`, { credentials: 'same-origin' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    if (!blob.size) throw new Error('文件为空');
+    const cd = resp.headers.get('content-disposition') || '';
+    const m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    const name = m ? decodeURIComponent(m[1]) : `${t.title}.${t.fmt || 'txt'}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    await api(`/api/tasks/${t.id}/ack`, { method: 'POST' });
+    showTaskMsg(`已接收「${name}」，服务器文件已删除`, 'ok');
+  } catch (err) {
+    showTaskMsg(`未接收成功：${err.message}（文件仍保留，可重试）`, 'bad');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+    await load();
+  }
 }
 
 async function cancelTask(id) {
@@ -351,6 +405,14 @@ function showTaskMsg(text, kind) {
 /* ---------------- 绑定 ---------------- */
 
 $('#genKeyBtn').addEventListener('click', genKeys);
+$('#keyDays').addEventListener('change', () => {
+  const custom = $('#keyDays').value === 'custom';
+  $('#keyCustomDays').classList.toggle('hidden', !custom);
+  if (custom) { $('#keyCustomDays').focus(); }
+  updateKeySummary();
+});
+$('#keyCustomDays').addEventListener('input', updateKeySummary);
+$('#keyCount').addEventListener('input', updateKeySummary);
 $('#refreshBtn').addEventListener('click', load);
 $('#logoutBtn').addEventListener('click', async () => {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch (_) {}

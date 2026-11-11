@@ -20,7 +20,8 @@
   - 未绑定时：`账号：待用户注册后绑定`
   - 已绑定时：**账号 / 密码 / 使用者 / 注册时间**（可一键复制「账号+密码+密钥」）
 - 每把密钥**只能注册一次**，注册后立即标记 `已使用`；未使用的可撤销、记录可删除；
-- 有效期随密钥：`1 / 31 / 124 / 372` 天或 `999999`（永久），注册出的账号直接获得该时长。
+- 有效期随密钥：生成时可选 `1 / 7 / 31 / 124 / 372` 天、**自定义天数（1-65535）**或 `999999`（永久），
+  注册出的账号直接获得该时长；后台生成表单会实时显示「将生成 N 把 · 每把 X 天」。
 
 > 说明：为了满足「后台显示账号密码」的需求，注册时设置的口令会以明文保存在密钥记录里。
 > 请确保服务器与数据库文件权限安全；口令本身另以 scrypt 哈希保存用于登录校验。
@@ -47,11 +48,17 @@
 上游 CLI/服务写盘 → data/runtime/tmp/<任务ID>/…（临时）
         ↓ 下载完成
 任务状态 = 待接收（记录文件名/大小，DB 不存文件内容）
-        ↓ 用户点「接收文件」
-GET /api/tasks/{id}/download → 流式（256KB 分块）传输到浏览器
-        ↓ 传完
-立即删除临时目录，状态 = 已接收；超过 TTL（默认 120 分钟）未接收则自动删除并标记「已过期」
+        ↓ 用户点「接收文件」（弹确认框说明：未接收会被删除）
+GET /api/tasks/{id}/download → 流式传输到浏览器并保存
+        ↓ 前端确认「已完整拿到」
+POST /api/tasks/{id}/ack → 才删除临时目录，状态 = 已接收
+        ↓ 若中断/未确认
+文件继续保留，可重试；超过 TTL（默认 120 分钟）自动删除并标记「已过期」
 ```
+
+**关键点：没有客户端确认就不会删文件。** 浏览器无法告诉服务端「用户是否真的保存成功」，
+服务端也分不清「客户端收完」和「客户端断开但数据已进内核缓冲」，因此删除动作由前端在
+完整取回文件后显式 ack 触发；最坏情况只是文件多留到 TTL 到期。
 
 数据库只保存：**用户名、书名、来源、格式、章节数、文件大小、时间、状态** —— 没有文件内容，也没有长期的服务器副本。
 页面上的「重新下载」会按原参数重新排队。
@@ -92,7 +99,9 @@ GET /api/tasks/{id}/download → 流式（256KB 分块）传输到浏览器
 | --- | --- |
 | ![搜索](docs/screenshots/search.png) | ![选中](docs/screenshots/search-selected.png) |
 
-移动端（390×844）：![移动端](docs/screenshots/app-mobile.png)
+| 接收确认（提示未接收会被删除） | 移动端（390×844） |
+| --- | --- |
+| ![接收](docs/screenshots/receive-dialog.png) | ![移动端](docs/screenshots/app-mobile.png) |
 
 ## 快速开始
 
@@ -174,7 +183,8 @@ python serve.py
 | POST | `/api/tasks` | 入队 |
 | DELETE | `/api/tasks/{id}` | 取消（含待接收文件的删除） |
 | POST | `/api/tasks/{id}/pause` | 暂停：丢弃进度，只能重新下载 |
-| GET | `/api/tasks/{id}/download` | **流式接收**，传完即删服务器文件 |
+| GET | `/api/tasks/{id}/download` | **流式接收**（不会自动删除，等待客户端确认） |
+| POST | `/api/tasks/{id}/ack` | 客户端确认已保存 → 删除服务器临时文件 |
 | POST | `/api/tasks/{id}/retry` | 按原参数**重新排队** |
 | GET/POST/DELETE | `/api/admin/keys` | 密钥列表 / 生成 / 撤销或删除 |
 | GET | `/api/admin/overview` | 用户、密钥、任务、统计 |
@@ -188,13 +198,25 @@ python serve.py
 
 ```bash
 cd webapp
+
+# 一条命令跑完所有模块（单元 + 黑盒 + 接口探针）
+python tests/selftest_all.py
+
+# 再加真实环境（需服务已启动）：真实搜索/下载/浏览器接收
+python tests/selftest_all.py --live --url http://127.0.0.1:8099
+```
+
+也可以单独跑某个模块：
+
+```bash
 python tests/test_security.py        # 单元：nanoid（含小字母表越界）、口令、令牌
 python tests/test_validity.py        # 单元：叠加、65535 封顶、永久
 python tests/test_throttle.py        # 单元：撞库计数、锁定、持久化、作用域隔离
-python tests/test_keys.py            # 单元：一钥一账号、单次使用、账号密码可见
-python tests/test_scheduler.py       # 单元：单线程、切换、归属、交付删除、暂停不可续传
+python tests/test_keys.py            # 单元：密钥只带时效、注册绑定、自定义天数
+python tests/test_scheduler.py       # 单元：单线程、切换、归属、交付、暂停、TTL 过期
 python tests/test_auth_blackbox.py   # 黑盒：真实 HTTP 的密钥/登录/权限/后台/锁定（18 组）
-python tests/e2e_live.py             # 真实环境：密钥激活 + 聚合搜索 + 真实下载 + 接收即删除 + 暂停
+python tests/e2e_live.py             # 真实环境：密钥注册 + 聚合搜索 + 真实下载 + 接收 + 暂停
+python tests/test_receive_browser.py # 浏览器：点「接收文件」真正落盘 + ack 后删除（Playwright）
 CHROME_PATH=<chrome> python tests/shot_ui.py <目录>   # 可选：界面截图
 ```
 

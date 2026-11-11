@@ -16,7 +16,6 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from . import auth, store, validity
@@ -170,6 +169,7 @@ async def api_meta(request: Request):
             "poll_ms": settings.poll_interval_ms,
             "registration_open": key_stats.get("unused", 0) > 0,
             "unused_keys": key_stats.get("unused", 0),
+            "file_ttl_min": settings.file_ttl_min,
             "cookie_secure": settings.cookie_secure,
         },
         "user": auth.user_public(user) if user else None,
@@ -300,7 +300,11 @@ async def api_cancel_task(request: Request, task_id: str):
 
 @app.get("/api/tasks/{task_id}/download")
 async def api_download(request: Request, task_id: str):
-    """把临时文件流式传给用户浏览器，传输结束立刻删除服务器上的文件。"""
+    """把临时文件流式传给用户浏览器。
+
+    注意：**不会**在响应结束时自动删除文件。浏览器无法告知服务端「用户是否真的保存成功」，
+    因此删除动作由前端在完整拿到文件后调用 `/ack` 触发；未 ack 的文件按 TTL 自动清理。
+    """
     user = request.state.user
     task = store.get_task(task_id)
     if task is None:
@@ -322,7 +326,12 @@ async def api_download(request: Request, task_id: str):
     size = path.stat().st_size
     filename = path.name
     media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    disposition = f"attachment; filename*=utf-8''{quote(filename)}"
+    # ASCII 回退文件名 + RFC 5987 的 UTF-8 文件名
+    ascii_name = "".join(c if ord(c) < 128 and c not in '"\\' else "_" for c in filename)
+    disposition = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
 
     def iter_file():
         with open(path, "rb") as fp:
@@ -332,17 +341,27 @@ async def api_download(request: Request, task_id: str):
                     break
                 yield chunk
 
-    # 传输结束后（无论成功与否）删除临时文件
-    cleanup = BackgroundTask(scheduler.complete_delivery, task_id)
     return StreamingResponse(
         iter_file(),
         media_type=media_type,
-        headers={
-            "Content-Disposition": disposition,
-            "Content-Length": str(size),
-        },
-        background=cleanup,
+        headers={"Content-Disposition": disposition, "Content-Length": str(size)},
     )
+
+
+@app.post("/api/tasks/{task_id}/ack")
+async def api_ack_delivery(request: Request, task_id: str):
+    """由前端在文件完整保存到本机后调用：立即删除服务器上的临时文件。"""
+    user = request.state.user
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task["user_id"] != user["id"] and user["role"] != store.ROLE_ADMIN:
+        raise HTTPException(status_code=403, detail="只能确认接收自己的文件")
+    if task["status"] != store.STATUS_READY:
+        raise HTTPException(status_code=409, detail="文件不在待接收状态")
+    scheduler: Scheduler = state["scheduler"]
+    scheduler.complete_delivery(task_id)
+    return {"ok": True, "deleted": True}
 
 
 @app.post("/api/tasks/{task_id}/pause")

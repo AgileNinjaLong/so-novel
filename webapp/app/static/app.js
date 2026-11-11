@@ -440,6 +440,11 @@ function renderTasks(snap) {
     titleCell.dataset.label = '书名';
     titleCell.appendChild(el('div', 't', t.title));
     if (t.message) titleCell.appendChild(el('div', 'm', t.message));
+    if (t.status === 'ready') {
+      const ttl = (state.meta && state.meta.app.file_ttl_min) || 120;
+      titleCell.appendChild(el('div', 'm warn-text',
+        `文件已就绪，仅保留 ${ttl} 分钟；未接收将自动删除（可重新下载）`));
+    }
     if (t.error && t.status === 'failed') titleCell.appendChild(el('div', 'm', t.error));
     tr.appendChild(titleCell);
 
@@ -477,9 +482,9 @@ function renderTasks(snap) {
       actions.appendChild(cancel);
     }
     if (t.can_receive) {
-      const a = el('a', 'btn small primary', '接收文件');
-      a.href = `/api/tasks/${t.id}/download`;
-      actions.appendChild(a);
+      const btn = el('button', 'btn small primary', '接收文件');
+      btn.addEventListener('click', () => receiveTask(t, btn));
+      actions.appendChild(btn);
     }
     if (t.can_retry) {
       const retry = el('button', 'btn small ghost', '重新下载');
@@ -509,6 +514,90 @@ function statusTag(t) {
   let label = text;
   if (t.status === 'queued' && t.queue_position) label += ` · 第 ${t.queue_position} 位`;
   return el('span', 'tag ' + cls, label);
+}
+
+async function receiveTask(t, btn) {
+  const ttl = (state.meta && state.meta.app.file_ttl_min) || 120;
+  const open = await showReceiveDialog(t, ttl);
+  if (!open) return;
+
+  const oldText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '接收中…';
+  showMsg('正在接收文件，请稍候…', 'ok');
+  try {
+    const resp = await fetch(`/api/tasks/${t.id}/download`, { credentials: 'same-origin' });
+    if (!resp.ok) {
+      let detail = `HTTP ${resp.status}`;
+      try { detail = (await resp.json()).detail || detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    const blob = await resp.blob();
+    if (!blob.size) throw new Error('收到的文件为空');
+    const filename = filenameFromDisposition(resp.headers.get('content-disposition'))
+      || `${t.title || 'book'}.${t.fmt || 'txt'}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+    await api(`/api/tasks/${t.id}/ack`, { method: 'POST' });
+    showMsg(`已接收「${filename}」，服务器临时文件已删除`, 'ok');
+  } catch (err) {
+    showMsg(
+      `未接收成功：${err.message}。文件仍保留在服务器，可在 ${ttl} 分钟内重试；超时后自动删除，需要重新下载。`,
+      'bad'
+    );
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+    await refresh();
+  }
+}
+
+function showReceiveDialog(t, ttl) {
+  return new Promise((resolve) => {
+    const modal = $('#receiveModal');
+    $('#receiveText').textContent =
+      `即将接收《${t.title}》（${fmtSize(t.size_bytes)}）。\n\n` +
+      `· 文件会下载到你本机；完整接收成功后，服务器才会删除该文件。\n` +
+      `· 若取消或中断，文件仍会保留 ${ttl} 分钟供你重试。\n` +
+      `· 超过 ${ttl} 分钟仍未接收，服务器会自动删除，届时只能「重新下载」。`;
+    modal.classList.remove('hidden');
+
+    const cleanup = (value) => {
+      modal.classList.add('hidden');
+      $('#receiveOk').removeEventListener('click', onOk);
+      $('#receiveCancel').removeEventListener('click', onCancel);
+      resolve(value);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    $('#receiveOk').addEventListener('click', onOk);
+    $('#receiveCancel').addEventListener('click', onCancel);
+  });
+}
+
+function fmtSize(bytes) {
+  const n = Number(bytes || 0);
+  if (!n) return '大小未知';
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1048576).toFixed(2)} MB`;
+}
+
+function filenameFromDisposition(header) {
+  if (!header) return '';
+  const utf8 = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8) {
+    try { return decodeURIComponent(utf8[1]); } catch (_) { /* ignore */ }
+  }
+  const plain = header.match(/filename="([^"]*)"/i);
+  return plain ? plain[1] : '';
 }
 
 async function pauseTask(id) {

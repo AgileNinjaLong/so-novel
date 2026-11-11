@@ -89,13 +89,22 @@ def main() -> int:
     check(u3["permanent"] == 1, "账号永久")
     check(validity.remaining_days(u3) is None, "永久不显示天数")
 
-    print("[9] 撤销 / 删除 / 非法档位")
+    print("[9] 撤销 / 删除 / 有效期校验")
     k = auth.generate_invite_keys(days=31, count=1)[0]
     check(store.revoke_invite_key(k["id"]) is True, "撤销成功")
     expect_http(lambda: auth.redeem_key(k["key"], "eve", "password123", ip="4.4.4.4"), 403, "已撤销密钥被拒绝")
     check(store.delete_invite_key(k["id"]) is True, "删除记录成功")
     check(store.get_invite_key(k["id"]) is None, "记录已不存在")
-    expect_http(lambda: auth.generate_invite_keys(days=7, count=1), 400, "非预设档位被拒绝")
+
+    # 支持自定义时长：1..65535 任意天数
+    custom = auth.generate_invite_keys(days=7, count=1)[0]
+    check(custom["days"] == 7 and custom["permanent"] == 0, "可以生成 7 天的自定义密钥")
+    custom_user = auth.redeem_key(custom["key"], "frank", "frank-pass-1", ip="5.5.5.5")
+    check(validity.remaining_days(custom_user) == 7, "自定义 7 天的账号有效期正确")
+    max_days_key = auth.generate_invite_keys(days=65535, count=1)[0]
+    check(max_days_key["days"] == 65535, "可以生成 65535 天的密钥")
+    expect_http(lambda: auth.generate_invite_keys(days=0, count=1), 400, "0 天被拒绝")
+    expect_http(lambda: auth.generate_invite_keys(days=65536, count=1), 400, "超过 65535 天被拒绝")
 
     print("[10] 密钥唯一性")
     all_keys = store.list_invite_keys()

@@ -88,7 +88,7 @@
         <button id="refreshBtn" class="btn ghost small">刷新</button>
       </div>
     </div>
-    <p class="field-hint">同一时间只下载一本；多人提交按顺序排队。下载完成后请及时「接收文件」，服务器只在传输期间临时保存。</p>
+    <p class="field-hint">同一时间只下载一本；多人提交按顺序排队。下载完成后请及时「接收文件」——文件只在服务器临时保存，接收成功后立即删除，未接收会超时删除。</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -109,6 +109,17 @@
       <button id="modalCancel" class="btn ghost">取消</button>
       <button id="modalAfter" class="btn">等当前任务结束后切换</button>
       <button id="modalNow" class="btn danger">立即取消并切换</button>
+    </div>
+  </div>
+</div>
+
+<div id="receiveModal" class="modal hidden">
+  <div class="modal-card">
+    <h3>接收文件</h3>
+    <p id="receiveText"></p>
+    <div class="modal-actions">
+      <button id="receiveCancel" class="btn ghost">取消</button>
+      <button id="receiveOk" class="btn primary">开始接收</button>
     </div>
   </div>
 </div>

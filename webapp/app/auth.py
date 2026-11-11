@@ -177,11 +177,18 @@ def generate_invite_keys(
     note: str = "",
     created_by: str = "",
 ) -> list[dict[str, Any]]:
-    """只生成密钥与有效期，不创建账号；账号由用户注册时自己设置。"""
-    if days not in validity.GRANT_PRESETS:
+    """只生成密钥与有效期，不创建账号；账号由用户注册时自己设置。
+
+    days 支持 1..65535（uint16）之间的任意天数，或 999999 表示永久。
+    """
+    if days == validity.PERMANENT_DAYS:
+        pass
+    elif not (1 <= int(days) <= validity.MAX_DAYS):
         raise HTTPException(
             status_code=400,
-            detail=f"days 只能是 {'/'.join(str(d) for d in validity.GRANT_PRESETS)}",
+            detail=(
+                f"有效期需在 1..{validity.MAX_DAYS} 天之间，或使用 999999 表示永久"
+            ),
         )
     count = max(1, min(20, int(count)))
     permanent = days >= validity.PERMANENT_DAYS

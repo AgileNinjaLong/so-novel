@@ -554,7 +554,7 @@ class Scheduler:
         store.finish_task(
             task["id"],
             store.STATUS_READY,
-            message=f"文件已就绪（{_human_size(size)}），请尽快点击接收；服务器不留存",
+            message=f"文件已就绪（{_human_size(size)}），请及时点击「接收文件」；接收成功后服务器立即删除，超时未接收也会自动删除",
             size_bytes=size,
             file_path=str(path),
         )

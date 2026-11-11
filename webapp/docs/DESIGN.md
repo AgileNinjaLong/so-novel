@@ -162,7 +162,18 @@ FastAPI（app/main.py）
 （0.2s × 次数，最多 2s）；成功清零。口令校验用 scrypt + 常量时间比较，账号不存在时
 也执行一次同样开销的校验，避免用户名枚举的时间侧信道。
 
-### 暂停 = 不可续传
+### 交付：客户端确认后删除（ack）
+
+```
+scheduler 完成 → ready（file_path + size_bytes）
+GET /download  → 流式返回，不删除
+POST /ack      → 删除临时目录、状态 delivered
+TTL sweep      → 超时未 ack → 删除、状态 expired
+```
+
+不用「响应结束即删除」，因为服务端无法区分「浏览器已保存成功」与「断开但内核缓冲已接收」；
+改为前段 `fetch → blob → 保存 → ack`，保证**没有确认就不删**（最坏只是多留到 TTL）。
+
 
 两个上游都没有可靠的「暂停后继续」：so-novel 无断点续传，番茄的续传依赖本地状态且
 被我们的临时目录策略打断。因此：
@@ -196,20 +207,22 @@ step = int(1.6 * mask * size / len(alphabet))
   `nanoid` 移植时保留了上游「掩码越界字节跳过」的语义（否则小字母表会索引越界）；
 - 口令：`hashlib.scrypt(n=16384, r=8, p=1, 随机盐)`，存 `scrypt$n$r$p$salt$hash`。
 
-### 交付：文件不在服务器留存
+### 暂停 = 不可续传
 
-上游只能写磁盘，所以服务器只提供**临时中转**：
+两个上游都没有可靠的「暂停后继续」：so-novel 无断点续传，番茄的续传依赖本地状态且会被
+临时目录策略打断。因此：
 
-```
-data/runtime/tmp/<task_id>/…            下载过程中
-→ 任务 ready（记录文件名/大小，DB 不存内容，file_path 仅为临时引用）
-→ GET /api/tasks/{id}/download          256KB 分块流式传输给浏览器
-→ BackgroundTask 在响应结束后删除临时目录，任务变 delivered
-```
+- `pause()` 对 running 任务置取消标志并终止进程，最终状态记为 `paused`（不是 `canceled`）；
+- 临时文件立即删除，进度不再保留；
+- 暂停后只出现「重新下载」：`POST /api/tasks/{id}/retry` 会**新建任务并重新排队**
+  （队列位置从队尾开始计算），旧任务保持 `paused` 供追溯。
 
-- 未接收的临时文件由清扫线程按 `WEBAPP_FILE_TTL_MIN`（默认 120 分钟）删除并标记 `expired`；
-- 服务启动时清空整个 `runtime/tmp`，并把遗留的 `ready` 标记为 `expired`（DB 里不留路径）；
-- 因此数据库只保留「谁、什么时候、下了哪本书、多大、什么状态」，没有小说内容。
+### 临时文件与 TTL
+
+- 上游只能写磁盘，所以服务器只提供**临时中转**：`data/runtime/tmp/<task_id>/`；
+- 待接收文件由清扫线程按 `WEBAPP_FILE_TTL_MIN`（默认 120 分钟）删除并标记 `expired`；
+- 服务启动时清空整个 `runtime/tmp`，把遗留的 `ready` 标记为 `expired`（DB 里不留路径）；
+- 数据库只保留「谁、什么时候、下了哪本书、多大、什么状态」，没有小说内容。
 
 ### 有效期数学
 

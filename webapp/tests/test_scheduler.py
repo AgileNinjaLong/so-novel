@@ -243,6 +243,25 @@ def main() -> int:
     check(wait_until(lambda: store.task_counts().get("running", 0) == 0, 25), "没有遗留 running")
     print(f"  统计: {store.task_counts()}")
 
+    print("[10] 待接收超时（TTL）自动删除并标记过期")
+    t5 = scheduler.enqueue(
+        source="beta", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="书7", book_ref="b7", fmt="txt",
+    )
+    ttl_id = t5["task"]["id"]
+    check(wait_until(lambda: store.get_task(ttl_id)["status"] == "ready", 25), "任务进入待接收")
+    path = scheduler.deliverable_path(ttl_id)
+    check(path is not None, "临时文件存在")
+    if path is not None:
+        from app.config import settings
+
+        task_dir = settings.temp_root / ttl_id
+        old = time.time() - 3 * 3600
+        os.utime(task_dir, (old, old))
+    scheduler._sweep_once()
+    check(store.get_task(ttl_id)["status"] == "expired", "超时后标记为已过期")
+    check(scheduler.deliverable_path(ttl_id) is None, "超时后临时文件已删除")
+
     scheduler.shutdown()
     print()
     if FAILED:

@@ -191,8 +191,13 @@ def main() -> int:
     check(resp.headers.get("content-type", "").startswith("text/plain"), "内容按附件流式返回")
     check(len(resp.content) == ready_task["size_bytes"], "收到的字节数与记录一致")
     check(
+        os.path.isdir(temp_dir(t3)),
+        "仅下载未被确认时，服务器文件仍保留（避免用户没保存成功就丢文件）",
+    )
+    api(carol, "POST", f"/api/tasks/{t3}/ack")
+    check(
         wait_until(lambda: not os.path.isdir(temp_dir(t3)), 20),
-        "接收完成后服务器临时文件已删除",
+        "确认接收后服务器临时文件才删除",
     )
     check(
         wait_until(lambda: task_by_id(state(carol), t3)["status"] == "delivered", 20),
