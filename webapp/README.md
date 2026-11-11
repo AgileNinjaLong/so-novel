@@ -23,7 +23,16 @@
   - *立即取消并切换*：立刻中断当前下载并切换。
   - 切换生效前，不允许再向旧来源提交新任务；任何时刻队列里不会混跑两个来源。
 - 任务状态与进度（章节数 / 百分比）、取消、完成后直接下载文件。
+- 一键清理「失败/已取消」的记录（已完成的下载保留）。
 - 可选整站访问口令（`WEBAPP_PASSWORD`），适合放到公网。
+
+## 界面
+
+| 下载中 + 队列 + 历史 | 切换来源确认 |
+| --- | --- |
+| ![队列](docs/screenshots/queue-running.png) | ![切换](docs/screenshots/switch-modal.png) |
+
+登录页（设置了 `WEBAPP_PASSWORD` 时）：![登录](docs/screenshots/login.png)
 
 ## 目录结构
 
@@ -76,7 +85,9 @@ python serve.py
 只想验证队列/切换逻辑（不需要任何上游二进制）：
 
 ```bash
-python tests/test_scheduler.py
+python tests/test_scheduler.py          # 假插件，验证队列与切换语义
+python tests/e2e_live.py               # 对已运行的服务做真实并发验证
+CHROME_PATH=<chrome路径> python tests/shot_ui.py .   # 可选：前端截图（需 playwright）
 ```
 
 ## 配置（环境变量）
@@ -118,8 +129,28 @@ python tests/test_scheduler.py
 | GET | `/api/search?q=` | 仅对支持搜索的来源生效（番茄） |
 | POST | `/api/tasks` | 入队：`{source, title, book_ref, fmt}` |
 | DELETE | `/api/tasks/{id}` | 取消排队/中断下载 |
+| POST | `/api/cleanup` | 清理失败/取消记录（`{"include_success": true}` 可连成功记录一起清） |
 | GET | `/api/tasks/{id}/download` | 下载已完成的文件 |
 | GET | `/healthz` | 健康检查 |
+
+## 验证情况（本机 Windows + 真实上游）
+
+已实际跑通的部分：
+
+- `tests/test_scheduler.py`：假插件的队列/切换语义（6 组断言）全部通过。
+- `tests/e2e_live.py`：对运行中的服务做真实并发验证（19 项）全部通过，覆盖
+  两个任务排队位置、中文昵称、`after_current` 挂起、切换期间拒绝旧来源、取消运行中任务后自动切换。
+- 真实下载：
+  - 番茄：搜索「斗罗大陆」→ 选中 69 章的书 → txt 494 KB，10 秒完成（69/69 章）；
+    另跑通 199 章、1184 章（含断点续传）与 2728 章的进度显示。
+  - so-novel：`https://www.biquge365.net/book/17221/`（活着）→ txt 277 KB（11/11 章），
+    产物名 `活着(余华).txt` 与上游规则一致。
+  - 失败路径：无效 book_id 会在界面上显示上游真实错误（`prepare plan failed: fetch directory ...`）。
+  - 重启恢复：强杀进程后重新启动，遗留的 running 任务被标记为失败且保留进度。
+- 前端：Playwright（本机 Chrome）截图验证了队列、排队位置、切换弹窗与登录页，见上表。
+
+**未在本机验证**：Docker 镜像构建（本机没有 Docker）。Dockerfile 按上游 Release 资产名与
+构建参数编写，如首次构建失败，优先检查 `SONOVEL_VERSION` / `TOMATO_VERSION` 对应的资产名是否变化。
 
 ## 与上游的关系
 

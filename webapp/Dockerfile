@@ -36,13 +36,15 @@ RUN set -eux; \
       arm64) SASSET="sonovel-linux_arm64.tar.gz"; TASSET="TomatoNovelDownloader-Linux_arm64-v${TOMATO_VERSION}";; \
       *) echo "不支持的架构: $TARGETARCH"; exit 1;; \
     esac; \
-    mkdir -p /app/vendor/sonovel /app/vendor/tomato/bin; \
+    mkdir -p /app/vendor/sonovel /app/vendor/tomato/bin /tmp/sonovel-x; \
     curl -fsSL -o /tmp/sonovel.tar.gz \
       "https://github.com/freeok/so-novel/releases/download/v${SONOVEL_VERSION}/${SASSET}"; \
-    mkdir -p /tmp/sonovel-x; \
     tar -xzf /tmp/sonovel.tar.gz -C /tmp/sonovel-x; \
-    SROOT="$(dirname "$(find /tmp/sonovel-x -type f -name app.jar | head -n 1)")"; \
-    test -n "$SROOT"; \
+    SROOT=""; \
+    for d in /tmp/sonovel-x /tmp/sonovel-x/* /tmp/sonovel-x/*/*; do \
+      if [ -f "$d/app.jar" ]; then SROOT="$d"; break; fi; \
+    done; \
+    if [ -z "$SROOT" ]; then echo "发布包里没有找到 app.jar"; exit 1; fi; \
     cp -a "$SROOT"/. /app/vendor/sonovel/; \
     curl -fsSL -o /app/vendor/tomato/bin/Tomato-Novel-Downloader \
       "https://github.com/zhongbai2333/Tomato-Novel-Downloader/releases/download/v${TOMATO_VERSION}/${TASSET}"; \

@@ -46,10 +46,6 @@ STATE_LABELS = {
     "failed": "失败",
     "canceled": "已取消",
 }
-SAVE_PHASE_LABELS = {
-    "TextSave": "正在写入文件",
-    "Audiobook": "正在生成有声书",
-}
 
 
 class TomatoPlugin:
@@ -453,13 +449,16 @@ def _progress_message(job: dict[str, Any]) -> str:
         return "上游排队中"
     if state == "running":
         total = int(snap.get("chapter_total") or 0)
-        done = int(snap.get("saved_chapters") or 0)
-        phase = SAVE_PHASE_LABELS.get(str(snap.get("save_phase") or ""), "")
+        saved = int(snap.get("saved_chapters") or 0)
+        group_total = int(snap.get("group_total") or 0)
+        group_done = int(snap.get("group_done") or 0)
+        if group_total and group_done < group_total:
+            return f"已下载 {saved}/{total} 章" if total else f"下载中（{group_done}/{group_total} 批）"
+        if total and saved < total:
+            return f"正在生成文件… 已保存 {saved}/{total} 章"
         if total:
-            text = f"已保存 {done}/{total} 章"
-        else:
-            text = "正在获取目录…"
-        return f"{text}（{phase}）" if phase else text
+            return "正在生成文件…"
+        return "正在准备下载…"
     if state in TERMINAL_STATES:
         return STATE_LABELS.get(state, state)
     return state

@@ -11,11 +11,13 @@
 
 from __future__ import annotations
 
+import shutil
 import threading
 import time
 from typing import Any
 
 from . import store
+from .config import settings
 from .plugins.base import CanceledError, Plugin
 
 PRUNE_KEEP = 200
@@ -171,6 +173,18 @@ class Scheduler:
                 return {"canceled": True, "was_running": True}
         return {"canceled": False, "was_running": False, "reason": "任务已结束"}
 
+    # ---------------- 清理 --------------
+    def cleanup_finished(
+        self, statuses: tuple[str, ...] = (store.STATUS_FAILED, store.STATUS_CANCELED)
+    ) -> dict[str, Any]:
+        """删除已结束的任务记录及其落盘目录（默认只清理失败/取消，保留成功的下载）。"""
+        with self._cv:
+            removed = store.purge_tasks(statuses)
+            for task in removed:
+                shutil.rmtree(settings.library_dir / task["id"], ignore_errors=True)
+            self._cv.notify_all()
+        return {"removed": len(removed), "ids": [t["id"] for t in removed]}
+
     # ---------------- 来源切换 --------------
     def request_switch(self, source: str, mode: str = "after_current") -> dict[str, Any]:
         if source not in self._plugins:
@@ -313,8 +327,6 @@ class Scheduler:
                 self._cv.notify_all()
 
     def _run_one(self, task: dict[str, Any], cancel_event: threading.Event) -> None:
-        from .config import settings
-
         plugin = self._plugins.get(task["source"])
         if plugin is None:
             store.finish_task(task["id"], store.STATUS_FAILED, error="来源插件不存在")

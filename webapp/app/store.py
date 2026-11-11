@@ -308,3 +308,22 @@ def task_counts() -> dict[str, int]:
             "SELECT status, COUNT(*) AS c FROM tasks GROUP BY status"
         ).fetchall()
     return {row["status"]: int(row["c"]) for row in rows}
+
+
+def purge_tasks(statuses: Iterable[str]) -> list[dict[str, Any]]:
+    """删除指定状态的记录（只允许已结束的状态），返回被删除的行。"""
+    wanted = [s for s in statuses if s in {STATUS_FAILED, STATUS_CANCELED, STATUS_SUCCESS}]
+    if not wanted:
+        return []
+    placeholders = ", ".join("?" for _ in wanted)
+    with _lock:
+        conn = _connection()
+        rows = conn.execute(
+            f"SELECT * FROM tasks WHERE status IN ({placeholders})", wanted
+        ).fetchall()
+        if rows:
+            conn.execute(
+                f"DELETE FROM tasks WHERE status IN ({placeholders})", wanted
+            )
+            conn.commit()
+    return [_row_to_task(r) for r in rows]

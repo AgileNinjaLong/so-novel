@@ -182,12 +182,15 @@ class SoNovelPlugin:
         with self._lock:
             self._procs[task["id"]] = proc
 
-        state: dict[str, Any] = {"total": 0, "title": "", "author": "", "error": ""}
+        state: dict[str, Any] = {"total": 0, "title": "", "author": "", "error": "", "tail": []}
 
         def on_line(line: str) -> None:
             line = strip_ansi(line)
             if not line:
                 return
+            state["tail"].append(line)
+            if len(state["tail"]) > 30:
+                del state["tail"][:-30]
             match = TOTAL_RE.search(line)
             if match:
                 state["total"] = int(match.group(1))
@@ -206,6 +209,7 @@ class SoNovelPlugin:
 
         started = time.time()
         last_pct = -1.0
+        last_log_check = 0.0
         try:
             while True:
                 if cancel_event.is_set():
@@ -215,6 +219,17 @@ class SoNovelPlugin:
                 if code is not None:
                     break
                 total = state["total"]
+                # 进度条关闭时逐章日志会走控制台；若上游把该行吞掉，则回落到读日志文件
+                if total <= 0 and time.time() - last_log_check > 2.0:
+                    last_log_check = time.time()
+                    title, author, log_total = _read_log_info(work)
+                    if log_total > 0:
+                        state["total"] = log_total
+                    if title and not state["title"]:
+                        state["title"] = title
+                        state["author"] = author
+                        progress(title=title, message=f"正在下载《{title}》")
+                    total = state["total"]
                 done = _count_chapters(download_dir)
                 if total > 0:
                     pct = min(99.0, done / total * 100.0)
@@ -227,7 +242,7 @@ class SoNovelPlugin:
                             message=f"已下载 {done}/{total} 章",
                         )
                 elif done > 0:
-                    progress(message=f"已下载 {done} 章")
+                    progress(done=done, total=0, message=f"已下载 {done} 章")
                 if settings.task_timeout_sec and time.time() - started > settings.task_timeout_sec:
                     terminate_tree(proc)
                     raise RuntimeError("任务超时，已被终止")
@@ -250,6 +265,9 @@ class SoNovelPlugin:
             message = "未生成下载文件"
             if state["error"]:
                 message += f"：{state['error']}"
+            stdout_tail = " | ".join(state["tail"][-6:]) if state["tail"] else ""
+            if stdout_tail:
+                message += f"\n上游输出：{stdout_tail}"
             if tail:
                 message += f"\n最后日志：{tail}"
             raise RuntimeError(message)
@@ -315,6 +333,35 @@ def _find_artifact(download_dir: Path, fmt: str) -> Path | None:
     if matches:
         return max(matches, key=lambda p: p.stat().st_size)
     return None
+
+
+def _read_log_info(work: Path) -> tuple[str, str, int]:
+    """从上游的章节日志里读取书名/作者/总章节数（控制台被吞时的兜底）。"""
+    logs = work / "logs"
+    if not logs.is_dir():
+        return "", "", 0
+    candidates = sorted(
+        logs.glob("*章节下载*.log"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    if not candidates:
+        return "", "", 0
+    try:
+        with open(candidates[0], "r", encoding="utf-8", errors="replace") as fp:
+            lines = fp.readlines()[-200:]
+    except OSError:
+        return "", "", 0
+    total = 0
+    title = ""
+    author = ""
+    for line in lines:
+        match = TOTAL_RE.search(line)
+        if match:
+            total = int(match.group(1))
+        if not title:
+            match_title = TITLE_RE.search(line)
+            if match_title:
+                title, author = match_title.group(1), match_title.group(2)
+    return title, author, total
 
 
 def _tail_log(work: Path, title: str, author: str, lines: int = 3) -> str:

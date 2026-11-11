@@ -109,6 +109,7 @@ function bindEvents() {
   $('#searchBox').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
   $('#enqueueBtn').addEventListener('click', enqueue);
   $('#refreshBtn').addEventListener('click', refresh);
+  $('#cleanupBtn').addEventListener('click', cleanup);
   $('#modalCancel').addEventListener('click', closeModal);
   $('#modalAfter').addEventListener('click', () => applySwitch('after_current'));
   $('#modalNow').addEventListener('click', () => applySwitch('cancel_now'));
@@ -209,9 +210,19 @@ async function enqueue() {
   let title = $('#titleBox').value.trim();
 
   if (p.capabilities.search) {
-    if (!state.picked) return showMsg('请先搜索并选择一本书', 'bad');
-    ref = state.picked.book_ref;
-    title = title || state.picked.title;
+    if (state.picked) {
+      ref = state.picked.book_ref;
+      title = title || state.picked.title;
+    } else {
+      // 搜索框里直接填 book_id（纯数字）时，允许跳过搜索直接下载
+      const typed = $('#searchBox').value.trim();
+      if (/^\d{6,}$/.test(typed)) {
+        ref = typed;
+        title = title || `book ${typed}`;
+      } else {
+        return showMsg('请先搜索并选择一本书，或直接在搜索框粘贴 book_id', 'bad');
+      }
+    }
   } else {
     ref = $('#urlBox').value.trim();
     if (!ref) return showMsg('请粘贴书籍详情页链接', 'bad');
@@ -331,6 +342,17 @@ function statusTag(t) {
   let label = text;
   if (t.status === 'queued' && t.queue_position) label += ` · 第 ${t.queue_position} 位`;
   return el('span', 'tag ' + cls, label);
+}
+
+async function cleanup() {
+  if (!confirm('删除所有「失败」和「已取消」的任务记录（已完成的下载会保留）？')) return;
+  try {
+    const data = await api('/api/cleanup', { method: 'POST', body: {} });
+    showMsg(`已清理 ${data.removed} 条记录`, 'ok');
+    await refresh();
+  } catch (err) {
+    showMsg(err.message, 'bad');
+  }
 }
 
 async function cancelTask(id) {

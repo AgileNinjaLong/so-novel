@@ -9,10 +9,12 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 
 from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from . import store
 from .config import settings
@@ -172,7 +174,8 @@ async def api_search(q: str, source: str | None = None):
     if not query:
         raise HTTPException(status_code=400, detail="请输入书名")
     try:
-        items = plugin.search(query)
+        # 搜索可能触发番茄服务首次启动（耗时数十秒），必须放到线程池里，避免阻塞事件循环
+        items = await run_in_threadpool(plugin.search, query)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"搜索失败：{exc}")
     return {
@@ -194,7 +197,10 @@ async def api_search(q: str, source: str | None = None):
 
 def _user_name(request: Request) -> str:
     raw = request.cookies.get(USER_COOKIE, "")
-    name = raw.strip()[:24]
+    try:
+        name = unquote(raw).strip()[:24]
+    except Exception:
+        name = ""
     return name or "匿名"
 
 
@@ -220,10 +226,10 @@ async def api_create_task(request: Request, payload: dict[str, Any] = Body(...))
     except EnqueueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     response = JSONResponse(result, status_code=201)
-    if not request.cookies.get(USER_COOKIE):
-        response.set_cookie(
-            USER_COOKIE, _user_name(request), max_age=30 * 24 * 3600, samesite="lax"
-        )
+    # Cookie 只能放 ASCII，昵称做 URL 编码
+    response.set_cookie(
+        USER_COOKIE, quote(_user_name(request), safe=""), max_age=30 * 24 * 3600, samesite="lax"
+    )
     return response
 
 
@@ -232,7 +238,11 @@ async def api_set_me(request: Request, payload: dict[str, Any] = Body(...)):
     name = str(payload.get("name") or "").strip()[:24] or "匿名"
     response = JSONResponse({"name": name})
     response.set_cookie(
-        USER_COOKIE, name, max_age=30 * 24 * 3600, samesite="lax", httponly=False
+        USER_COOKIE,
+        quote(name, safe=""),
+        max_age=30 * 24 * 3600,
+        samesite="lax",
+        httponly=False,
     )
     return response
 
@@ -258,6 +268,15 @@ async def api_cancel_task(task_id: str):
         return scheduler.cancel(task_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="任务不存在")
+
+
+@app.post("/api/cleanup")
+async def api_cleanup(payload: dict[str, Any] | None = Body(default=None)):
+    scheduler: Scheduler = state["scheduler"]
+    statuses = (store.STATUS_FAILED, store.STATUS_CANCELED)
+    if payload and payload.get("include_success"):
+        statuses = statuses + (store.STATUS_SUCCESS,)
+    return scheduler.cleanup_finished(statuses)
 
 
 @app.get("/api/tasks/{task_id}/download")
