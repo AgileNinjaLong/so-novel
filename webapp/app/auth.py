@@ -11,12 +11,9 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from . import store, validity
-from .config import settings
 from .security import (
-    constant_time_eq,
     hash_password,
     hash_token,
-    new_entity_id,
     new_session_token,
     unique_nanoid,
     verify_password,
@@ -96,56 +93,146 @@ def ensure_admin() -> str:
     return f"已同步管理员账号 {username}"
 
 
-# ---------------- 注册 ----------------
+# ---------------- 注册密钥（一钥一用户） ----------------
+
+KEY_MODE_OPEN = "open"
+KEY_MODE_BOUND = "bound"
 
 
-def register_user(
-    username: str, password: str, invite_key: str, *, ip: str = ""
+def key_public_info(code: str) -> dict[str, Any]:
+    """注册页/前台可查询的密钥信息（不含密码）。"""
+    row = store.get_invite_key_by_code(code.strip())
+    if row is None:
+        return {"valid": False, "reason": "密钥不存在"}
+    if row["status"] == "used":
+        return {"valid": False, "reason": "该密钥已被使用"}
+    if row["status"] == "revoked":
+        return {"valid": False, "reason": "该密钥已被管理员撤销"}
+    info = {
+        "valid": True,
+        "mode": row["mode"],
+        "days": row["days"],
+        "permanent": bool(row["permanent"]),
+        "days_text": "永久" if row["permanent"] else f"{row['days']} 天",
+    }
+    if row["mode"] == KEY_MODE_BOUND:
+        info["username"] = row["username"]
+        # 绑定型密钥的账号密码由管理员预设，注册页可以直接展示给持有人
+        info["password"] = row["password_plain"]
+    return info
+
+
+def redeem_key(
+    code: str, username: str, password: str, *, ip: str = ""
 ) -> dict[str, Any]:
-    expected = store.registration_key()
-    if not expected:
+    """用密钥注册/激活一个账号；密钥只能用一次。"""
+    _check_rate(f"register:{ip}")
+    row = store.get_invite_key_by_code(code.strip())
+    if row is None:
+        raise HTTPException(status_code=403, detail="注册密钥不存在")
+    if row["status"] != "unused":
         raise HTTPException(
             status_code=403,
-            detail="管理员尚未生成注册密钥，当前无法注册",
+            detail="该密钥已被使用或已撤销，请联系管理员重新获取",
         )
-    _check_rate(f"register:{ip}")
-    if not constant_time_eq(invite_key.strip(), expected):
-        raise HTTPException(status_code=403, detail="注册密钥不正确")
 
-    username = username.strip()
-    if not USERNAME_RE.match(username):
-        raise HTTPException(
-            status_code=400,
-            detail="用户名需 3-24 位，可用中英文、数字、下划线、短横线",
-        )
-    if not (PASSWORD_MIN <= len(password) <= PASSWORD_MAX):
-        raise HTTPException(
-            status_code=400,
-            detail=f"密码长度需 {PASSWORD_MIN}-{PASSWORD_MAX} 位",
-        )
+    if row["mode"] == KEY_MODE_BOUND:
+        username = (row["username"] or "").strip()
+        password = row["password_plain"] or ""
+        if not username or not password:
+            raise HTTPException(status_code=500, detail="绑定型密钥数据不完整")
+    else:
+        username = username.strip()
+        if not USERNAME_RE.match(username):
+            raise HTTPException(
+                status_code=400,
+                detail="用户名需 3-24 位，可用中英文、数字、下划线、短横线",
+            )
+        if not (PASSWORD_MIN <= len(password) <= PASSWORD_MAX):
+            raise HTTPException(
+                status_code=400, detail=f"密码长度需 {PASSWORD_MIN}-{PASSWORD_MAX} 位"
+            )
+
     if store.username_exists(username):
-        raise HTTPException(status_code=409, detail="用户名已被占用")
+        raise HTTPException(status_code=409, detail="用户名已被占用，请联系管理员")
 
-    # 默认开源时长（0 天 = 需管理员开通）
-    default_days = int(os.environ.get("WEBAPP_DEFAULT_GRANT_DAYS", "0") or 0)
+    permanent = bool(row["permanent"])
     expires_at = None
-    permanent = False
-    if default_days > 0:
-        granted = validity.grant({}, default_days)
-        permanent = bool(granted["permanent"])
-        expires_at = granted["expires_at"]
+    if not permanent:
+        expires_at = validity.fmt_ts(
+            validity.now_ts() + max(0, int(row["days"])) * validity.SECONDS_PER_DAY
+        )
 
     user = store.create_user(
         user_id=unique_nanoid(16, lambda _id: store.get_user(_id) is not None),
         username=username,
         password_hash=hash_password(password),
         role=store.ROLE_USER,
-        created_by="register",
+        created_by=f"key:{row['key']}",
         permanent=permanent,
         expires_at=expires_at,
     )
+    store.mark_invite_key_used(row["id"], user["id"], username)
     _clear_rate(f"register:{ip}")
     return user
+
+
+def generate_invite_keys(
+    *,
+    days: int,
+    count: int = 1,
+    mode: str = KEY_MODE_OPEN,
+    username: str = "",
+    password: str = "",
+    note: str = "",
+    created_by: str = "",
+) -> list[dict[str, Any]]:
+    """管理员生成密钥；绑定型只能一把（对应一个预置账号）。"""
+    if days not in validity.GRANT_PRESETS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"days 只能是 {'/'.join(str(d) for d in validity.GRANT_PRESETS)}",
+        )
+    if mode not in {KEY_MODE_OPEN, KEY_MODE_BOUND}:
+        raise HTTPException(status_code=400, detail="mode 只能是 open/bound")
+    if mode == KEY_MODE_BOUND:
+        count = 1
+        username = username.strip()
+        if not USERNAME_RE.match(username):
+            raise HTTPException(
+                status_code=400,
+                detail="绑定型密钥的用户名需 3-24 位，可用中英文、数字、下划线、短横线",
+            )
+        if not (PASSWORD_MIN <= len(password) <= PASSWORD_MAX):
+            raise HTTPException(
+                status_code=400, detail=f"绑定型密钥的密码需 {PASSWORD_MIN}-{PASSWORD_MAX} 位"
+            )
+        if store.username_exists(username):
+            raise HTTPException(status_code=409, detail="该用户名已被占用")
+    else:
+        username = ""
+        password = ""
+    count = max(1, min(20, int(count)))
+
+    permanent = days >= validity.PERMANENT_DAYS
+    created: list[dict[str, Any]] = []
+    for _ in range(count):
+        code = unique_nanoid(21, store.invite_key_code_exists)
+        key_id = unique_nanoid(16, lambda _id: store.get_invite_key(_id) is not None)
+        created.append(
+            store.create_invite_key(
+                key_id=key_id,
+                code=code,
+                mode=mode,
+                days=days,
+                permanent=permanent,
+                username=username or None,
+                password_plain=password or None,
+                note=note,
+                created_by=created_by,
+            )
+        )
+    return created
 
 
 # ---------------- 登录 ----------------

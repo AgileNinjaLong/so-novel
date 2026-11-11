@@ -314,7 +314,7 @@ function renderTasks(snap) {
   tbody.innerHTML = '';
   const tasks = snap.tasks || [];
   $('#emptyQueue').classList.toggle('hidden', tasks.length > 0);
-  $('#countBadge').textContent = `运行 ${snap.counts.running || 0} · 排队 ${snap.counts.queued || 0} · 完成 ${snap.counts.success || 0}`;
+  $('#countBadge').textContent = `运行 ${snap.counts.running || 0} · 排队 ${snap.counts.queued || 0} · 待接收 ${snap.counts.ready || 0}`;
 
   tasks.forEach((t) => {
     const tr = document.createElement('tr');
@@ -348,6 +348,7 @@ function renderTasks(snap) {
     prog.appendChild(bar);
     let label = `${Math.round(t.progress || 0)}%`;
     if (t.chapters_total) label += ` · ${t.chapters_done}/${t.chapters_total} 章`;
+    if (t.size_bytes) label += ` · ${(t.size_bytes / 1048576).toFixed(2)} MB`;
     prog.appendChild(el('div', 'p', label));
     tr.appendChild(prog);
 
@@ -358,12 +359,17 @@ function renderTasks(snap) {
       cancel.addEventListener('click', () => cancelTask(t.id));
       actions.appendChild(cancel);
     }
-    if (t.can_download) {
-      const a = el('a', 'btn small primary', '下载');
+    if (t.can_receive) {
+      const a = el('a', 'btn small primary', '接收文件');
       a.href = `/api/tasks/${t.id}/download`;
       actions.appendChild(a);
     }
-    if (!t.can_cancel && !t.can_download) {
+    if (t.can_retry) {
+      const retry = el('button', 'btn small ghost', '重新下载');
+      retry.addEventListener('click', () => retryTask(t.id));
+      actions.appendChild(retry);
+    }
+    if (!t.can_cancel && !t.can_receive && !t.can_retry) {
       actions.appendChild(el('span', 'muted', '—'));
     }
     tr.appendChild(actions);
@@ -375,7 +381,9 @@ function statusTag(t) {
   const map = {
     queued: ['queued', '排队中'],
     running: ['running', '下载中'],
-    success: ['success', '已完成'],
+    ready: ['ready', '待接收'],
+    delivered: ['delivered', '已接收'],
+    expired: ['expired', '已过期'],
     failed: ['failed', '失败'],
     canceled: ['canceled', '已取消'],
   };
@@ -383,6 +391,14 @@ function statusTag(t) {
   let label = text;
   if (t.status === 'queued' && t.queue_position) label += ` · 第 ${t.queue_position} 位`;
   return el('span', 'tag ' + cls, label);
+}
+
+async function retryTask(id) {
+  try {
+    const data = await api(`/api/tasks/${id}/retry`, { method: 'POST' });
+    showMsg(`已重新排队${data.queue_position ? `，第 ${data.queue_position} 位` : ''}`, 'ok');
+    await refresh();
+  } catch (err) { showMsg(err.message, 'bad'); }
 }
 
 async function cancelTask(id) {

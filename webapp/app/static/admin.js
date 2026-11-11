@@ -30,25 +30,16 @@ let overview = null;
 
 async function loadMe() {
   const me = await api('/api/auth/me');
-  const chip = document.getElementById('adminName');
   const role = me.user.role === 'admin' ? '管理员' : '用户';
-  chip.textContent = `${me.user.username} · ${role}`;
+  $('#adminName').textContent = `${me.user.username} · ${role}`;
 }
 
 async function load() {
   overview = await api('/api/admin/overview');
-  renderKey();
   renderStats();
+  renderKeys();
   renderUsers();
   renderTasks();
-}
-
-function renderKey() {
-  const key = overview.registration_key;
-  $('#keyBox').textContent = key || '尚未生成（当前无法注册）';
-  $('#keyMeta').textContent = key
-    ? `生成时间：${overview.registration_key_created_at || '—'}　长度：${key.length}`
-    : '注册入口已关闭';
 }
 
 function renderStats() {
@@ -59,7 +50,138 @@ function renderStats() {
   $('#taskCount').textContent = total;
   $('#userBadge').textContent = `共 ${overview.user_count} 人`;
   $('#taskBadge').textContent = `共 ${total} 条`;
+  const stats = overview.key_stats || {};
+  $('#keyStatBadge').textContent =
+    `未用 ${stats.unused || 0} · 已用 ${stats.used || 0} · 撤销 ${stats.revoked || 0}`;
 }
+
+/* ---------------- 密钥 ---------------- */
+
+function keyStatusText(status) {
+  return { unused: '未使用', used: '已使用', revoked: '已撤销' }[status] || status;
+}
+
+function renderKeys() {
+  const box = $('#keyList');
+  box.innerHTML = '';
+  const keys = overview.keys || [];
+  if (!keys.length) {
+    box.appendChild(el('div', 'muted', '还没有密钥，先在上面生成一把。'));
+    return;
+  }
+  keys.forEach((k) => {
+    const card = el('div', 'user-card');
+    const head = el('div', 'head');
+    const title = el('span', 'name', k.mode === 'bound' ? '绑定型密钥' : '开放型密钥');
+    head.appendChild(title);
+    const tags = el('div', 'tag-row');
+    tags.appendChild(el('span', 'badge ' + (k.status === 'unused' ? 'ok' : k.status === 'used' ? 'info' : 'warn'), keyStatusText(k.status)));
+    tags.appendChild(el('span', 'badge', k.days_text));
+    if (k.mode === 'bound') tags.appendChild(el('span', 'badge info', '绑定账号'));
+    head.appendChild(tags);
+    card.appendChild(head);
+
+    const code = el('div', 'key-box', k.key);
+    code.style.marginTop = '8px';
+    card.appendChild(code);
+
+    const meta = el('div', 'meta',
+      `生成：${(k.created_at || '').slice(0, 16).replace('T', ' ')}` +
+      (k.used_by_name ? `　使用者：${k.used_by_name}` : '') +
+      (k.note ? `　备注：${k.note}` : ''));
+    card.appendChild(meta);
+
+    if (k.mode === 'bound') {
+      const creds = el('div', 'meta', `预置账号：${k.username}　预置密码：${k.password}`);
+      creds.style.color = 'var(--text)';
+      card.appendChild(creds);
+    }
+
+    const ops = el('div', 'ops');
+    const copy = el('button', 'btn small', '复制密钥');
+    copy.addEventListener('click', () => copyText(k.key, copy));
+    ops.appendChild(copy);
+    if (k.mode === 'bound' && k.username) {
+      const copyAll = el('button', 'btn small', '复制账号+密码');
+      copyAll.addEventListener('click', () => copyText(`账号：${k.username}\n密码：${k.password}\n密钥：${k.key}`, copyAll));
+      ops.appendChild(copyAll);
+    }
+    if (k.status === 'unused') {
+      const revoke = el('button', 'btn small ghost', '撤销');
+      revoke.addEventListener('click', () => revokeKey(k));
+      ops.appendChild(revoke);
+    }
+    const del = el('button', 'btn small danger', '删除');
+    del.addEventListener('click', () => deleteKey(k));
+    ops.appendChild(del);
+    card.appendChild(ops);
+    box.appendChild(card);
+  });
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    const old = btn.textContent;
+    btn.textContent = '已复制';
+    setTimeout(() => { btn.textContent = old; }, 1200);
+  } catch (_) {
+    prompt('复制下面的内容：', text);
+  }
+}
+
+async function genKeys() {
+  const days = Number($('#keyDays').value);
+  const mode = $('#keyMode').value;
+  const count = mode === 'bound' ? 1 : Math.max(1, Math.min(20, Number($('#keyCount').value) || 1));
+  const body = { days, count, mode };
+  if (mode === 'bound') {
+    body.username = $('#keyUsername').value.trim();
+    body.password = $('#keyPassword').value;
+    body.note = $('#keyNote').value.trim();
+    if (!body.username || !body.password) {
+      showKeyMsg('绑定型密钥需要填写预置的用户名和密码', 'bad');
+      return;
+    }
+  }
+  $('#genKeyBtn').disabled = true;
+  try {
+    const data = await api('/api/admin/keys', { method: 'POST', body });
+    showKeyMsg(`已生成 ${data.keys.length} 把密钥`, 'ok');
+    $('#keyPassword').value = '';
+    await load();
+  } catch (err) {
+    showKeyMsg(err.message, 'bad');
+  } finally {
+    $('#genKeyBtn').disabled = false;
+  }
+}
+
+async function revokeKey(k) {
+  if (!confirm('撤销后这把密钥立即失效（未使用时）。继续？')) return;
+  try {
+    await api(`/api/admin/keys/${k.id}`, { method: 'DELETE' });
+    showKeyMsg('已撤销', 'ok');
+    await load();
+  } catch (err) { showKeyMsg(err.message, 'bad'); }
+}
+
+async function deleteKey(k) {
+  if (!confirm('从列表里彻底删除这条密钥记录？（已使用的账号不受影响）')) return;
+  try {
+    await api(`/api/admin/keys/${k.id}?hard=1`, { method: 'DELETE' });
+    showKeyMsg('已删除记录', 'ok');
+    await load();
+  } catch (err) { showKeyMsg(err.message, 'bad'); }
+}
+
+function showKeyMsg(text, kind) {
+  const box = $('#keyMsg');
+  box.textContent = text || '';
+  box.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+/* ---------------- 用户 ---------------- */
 
 function validityText(user) {
   if (user.permanent) return '永久有效';
@@ -77,7 +199,7 @@ function renderUsers() {
     const tags = el('div', 'tag-row');
     tags.appendChild(el('span', 'badge ' + (user.role === 'admin' ? 'info' : ''), user.role === 'admin' ? '管理员' : '用户'));
     tags.appendChild(el('span', 'badge ' + (user.status === 'active' ? 'ok' : 'bad'), user.status === 'active' ? '正常' : '已禁用'));
-    tags.appendChild(el('span', 'badge ' + (user.permanent ? 'ok' : user.remaining_days > 0 ? 'ok' : 'warn'), validityText(user)));
+    tags.appendChild(el('span', 'badge ' + (user.permanent || user.remaining_days > 0 ? 'ok' : 'warn'), validityText(user)));
     head.appendChild(tags);
     card.appendChild(head);
 
@@ -96,6 +218,10 @@ function renderUsers() {
     const toggle = el('button', 'btn small ghost', user.status === 'active' ? '禁用' : '启用');
     toggle.addEventListener('click', () => setStatus(user.id, user.status === 'active' ? 'banned' : 'active'));
     ops.appendChild(toggle);
+
+    const reset = el('button', 'btn small ghost', '重置密码');
+    reset.addEventListener('click', () => resetPassword(user));
+    ops.appendChild(reset);
 
     if (user.role !== 'admin') {
       const del = el('button', 'btn small danger', '删除');
@@ -123,6 +249,15 @@ async function setStatus(userId, status) {
   } catch (err) { showUserMsg(err.message, 'bad'); }
 }
 
+async function resetPassword(user) {
+  if (!confirm(`为「${user.username}」生成新密码？旧密码将立即失效。`)) return;
+  try {
+    const data = await api(`/api/admin/users/${user.id}/password`, { method: 'POST' });
+    showUserMsg(`新密码（请转交用户）：${data.password}`, 'ok');
+    await load();
+  } catch (err) { showUserMsg(err.message, 'bad'); }
+}
+
 async function removeUser(user) {
   if (!confirm(`确认删除用户「${user.username}」及其全部记录？此操作不可恢复。`)) return;
   try {
@@ -130,6 +265,16 @@ async function removeUser(user) {
     showUserMsg(`已删除用户 ${user.username}`, 'ok');
     await load();
   } catch (err) { showUserMsg(err.message, 'bad'); }
+}
+
+/* ---------------- 任务 ---------------- */
+
+function statusLabel(t) {
+  const map = {
+    queued: '排队中', running: '下载中', ready: '待接收',
+    delivered: '已接收', failed: '失败', canceled: '已取消', expired: '已过期',
+  };
+  return map[t.status] || t.status;
 }
 
 function renderTasks() {
@@ -166,7 +311,10 @@ function renderTasks() {
     fill.style.width = `${Math.max(0, Math.min(100, t.progress || 0))}%`;
     bar.appendChild(fill);
     prog.appendChild(bar);
-    prog.appendChild(el('div', 'p', `${Math.round(t.progress || 0)}%${t.chapters_total ? ` · ${t.chapters_done}/${t.chapters_total}` : ''}`));
+    let label = `${Math.round(t.progress || 0)}%`;
+    if (t.chapters_total) label += ` · ${t.chapters_done}/${t.chapters_total}`;
+    if (t.size_bytes) label += ` · ${(t.size_bytes / 1048576).toFixed(1)} MB`;
+    prog.appendChild(el('div', 'p', label));
     tr.appendChild(prog);
 
     const ops = el('td', 'action-cell');
@@ -176,22 +324,17 @@ function renderTasks() {
       btn.addEventListener('click', () => cancelTask(t.id));
       ops.appendChild(btn);
     }
-    if (t.can_download) {
-      const a = el('a', 'btn small primary', '下载');
+    if (t.can_receive) {
+      const a = el('a', 'btn small primary', '接收');
       a.href = `/api/tasks/${t.id}/download`;
       ops.appendChild(a);
     }
-    if (!t.can_cancel && !t.can_download) {
+    if (!t.can_cancel && !t.can_receive) {
       ops.appendChild(el('span', 'muted', '—'));
     }
     tr.appendChild(ops);
     tbody.appendChild(tr);
   });
-}
-
-function statusLabel(t) {
-  const map = { queued: '排队中', running: '下载中', success: '已完成', failed: '失败', canceled: '已取消' };
-  return map[t.status] || t.status;
 }
 
 async function cancelTask(id) {
@@ -214,26 +357,17 @@ function showTaskMsg(text, kind) {
   box.className = 'msg' + (kind ? ' ' + kind : '');
 }
 
-$('#rotateKeyBtn').addEventListener('click', async () => {
-  if (!confirm('生成新密钥后旧密钥立即失效（已注册用户不受影响）。继续？')) return;
-  try {
-    const data = await api('/api/admin/key', { method: 'POST' });
-    $('#keyMsg').textContent = '已生成新注册密钥';
-    $('#keyMsg').className = 'msg ok';
-    await load();
-  } catch (err) { $('#keyMsg').textContent = err.message; $('#keyMsg').className = 'msg bad'; }
+/* ---------------- 绑定 ---------------- */
+
+$('#keyMode').addEventListener('change', () => {
+  const bound = $('#keyMode').value === 'bound';
+  $('#boundFields').classList.toggle('hidden', !bound);
+  $('#keyCount').disabled = bound;
+  $('#keyCountLabel').classList.toggle('muted', true);
+  if (bound) $('#keyCount').value = '1';
 });
 
-$('#clearKeyBtn').addEventListener('click', async () => {
-  if (!confirm('清空注册密钥后，任何人都无法再注册。继续？')) return;
-  try {
-    await api('/api/admin/key', { method: 'DELETE' });
-    $('#keyMsg').textContent = '已清空，注册已关闭';
-    $('#keyMsg').className = 'msg ok';
-    await load();
-  } catch (err) { $('#keyMsg').textContent = err.message; $('#keyMsg').className = 'msg bad'; }
-});
-
+$('#genKeyBtn').addEventListener('click', genKeys);
 $('#refreshBtn').addEventListener('click', load);
 $('#logoutBtn').addEventListener('click', async () => {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch (_) {}
@@ -241,10 +375,6 @@ $('#logoutBtn').addEventListener('click', async () => {
 });
 
 loadMe().catch(() => {});
-load().then(() => {
-  if (overview && overview.active_source) {
-    // 仅用于展示来源
-  }
-}).catch((err) => {
+load().catch((err) => {
   document.body.insertAdjacentHTML('afterbegin', `<div class="banner bad" style="margin:14px">${err.message}</div>`);
 });

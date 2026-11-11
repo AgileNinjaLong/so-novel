@@ -9,68 +9,139 @@
 <body>
 <div class="auth-wrap">
   <div class="card auth-card">
-    <h1>注册</h1>
-    <p class="subtitle">需要管理员设置的注册密钥才能注册</p>
+    <h1>使用密钥注册</h1>
+    <p class="subtitle">每把密钥只能使用一次，自带有效期；绑定型密钥的账号密码由管理员预置。</p>
     <div id="alert" class="alert bad hidden"></div>
+
     <div class="field">
-      <label for="username">用户名</label>
-      <input id="username" type="text" autocomplete="username" placeholder="3-24 位，可中英文/数字/下划线">
-    </div>
-    <div class="field">
-      <label for="password">密码</label>
-      <input id="password" type="password" autocomplete="new-password" placeholder="8-128 位">
-    </div>
-    <div class="field">
-      <label for="password2">确认密码</label>
-      <input id="password2" type="password" autocomplete="new-password" placeholder="再次输入密码">
-    </div>
-    <div class="field">
-      <label for="invite">注册密钥</label>
-      <input id="invite" type="text" autocomplete="off" spellcheck="false" placeholder="向管理员索取">
+      <label for="key">注册密钥</label>
+      <input id="key" type="text" autocomplete="off" spellcheck="false" placeholder="21 位密钥，向管理员获取">
     </div>
     <div class="actions">
-      <button id="registerBtn" class="btn primary" style="flex:1">注册并登录</button>
+      <button id="checkBtn" class="btn primary" style="flex:1">查询密钥</button>
     </div>
+
+    <div id="info" class="hidden" style="margin-top:16px">
+      <div id="keySummary" class="alert ok"></div>
+
+      <div id="boundBox" class="hidden">
+        <div class="field">
+          <label>预置账号</label>
+          <input id="boundUser" type="text" readonly>
+        </div>
+        <div class="field">
+          <label>预置密码</label>
+          <input id="boundPass" type="text" readonly>
+        </div>
+        <div class="actions">
+          <button id="activateBtn" class="btn primary" style="flex:1">激活并登录</button>
+        </div>
+      </div>
+
+      <div id="openBox" class="hidden">
+        <div class="field">
+          <label for="username">用户名</label>
+          <input id="username" type="text" autocomplete="username" placeholder="3-24 位，可中英文/数字/下划线">
+        </div>
+        <div class="field">
+          <label for="password">密码</label>
+          <input id="password" type="password" autocomplete="new-password" placeholder="8-128 位">
+        </div>
+        <div class="field">
+          <label for="password2">确认密码</label>
+          <input id="password2" type="password" autocomplete="new-password" placeholder="再次输入密码">
+        </div>
+        <div class="actions">
+          <button id="registerBtn" class="btn primary" style="flex:1">注册并登录</button>
+        </div>
+      </div>
+    </div>
+
     <p class="switch-line">已有账号？<a href="/login">去登录</a></p>
   </div>
 </div>
 <script>
 const alertBox = document.getElementById('alert');
-function show(text, kind = 'bad') { alertBox.textContent = text; alertBox.className = 'alert ' + kind; }
-async function submitRegister() {
-  const username = document.getElementById('username').value.trim();
-  const password = document.getElementById('password').value;
-  const password2 = document.getElementById('password2').value;
-  const invite = document.getElementById('invite').value.trim();
-  if (!username || !password) return show('请填写用户名和密码');
-  if (password !== password2) return show('两次输入的密码不一致');
-  if (!invite) return show('请输入注册密钥');
-  const btn = document.getElementById('registerBtn');
-  btn.disabled = true;
-  try {
-    const res = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, invite_key: invite }),
-    });
-    if (res.ok) { location.href = '/'; return; }
-    let detail = '注册失败';
-    try { const data = await res.json(); detail = data.detail || detail; } catch (_) {}
-    show(typeof detail === 'string' ? detail : JSON.stringify(detail));
-  } catch (err) {
-    show('网络错误：' + err.message);
-  } finally {
-    btn.disabled = false;
+let keyInfo = null;
+
+function show(text, kind = 'bad') {
+  alertBox.textContent = text;
+  alertBox.className = 'alert ' + kind;
+  alertBox.classList.toggle('hidden', !text);
+}
+
+async function api(url, opts = {}) {
+  const options = { ...opts, headers: { ...(opts.headers || {}) }, credentials: 'same-origin' };
+  if (options.body !== undefined) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(options.body);
+  }
+  const res = await fetch(url, options);
+  if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (_) {}
+  if (!res.ok) {
+    const msg = (data && data.detail) || `请求失败（${res.status}）`;
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return data;
+}
+
+async function checkKey() {
+  const key = document.getElementById('key').value.trim();
+  if (!key) return show('请先输入密钥');
+  show('');
+  const data = await api('/api/auth/key-info?key=' + encodeURIComponent(key)).catch((err) => {
+    show(err.message);
+    return null;
+  });
+  if (!data) return;
+  keyInfo = data;
+  document.getElementById('info').classList.remove('hidden');
+  const bound = data.mode === 'bound';
+  document.getElementById('boundBox').classList.toggle('hidden', !bound);
+  document.getElementById('openBox').classList.toggle('hidden', bound);
+  document.getElementById('keySummary').textContent =
+    `密钥有效 · 有效期 ${data.days_text}` + (bound ? ' · 绑定型（账号密码已预置）' : ' · 开放型（请自填账号密码）');
+  if (bound) {
+    document.getElementById('boundUser').value = data.username || '';
+    document.getElementById('boundPass').value = data.password || '';
   }
 }
-document.getElementById('registerBtn').addEventListener('click', submitRegister);
-fetch('/api/meta').then((r) => r.json()).then((meta) => {
-  if (!meta.app.registration_open) {
-    show('当前未开放注册：管理员尚未生成注册密钥', 'bad');
-    document.getElementById('registerBtn').disabled = true;
+
+async function submitRegister(useBound) {
+  const key = document.getElementById('key').value.trim();
+  if (!keyInfo) return show('请先查询密钥');
+  let username = '';
+  let password = '';
+  if (useBound) {
+    username = document.getElementById('boundUser').value;
+    password = document.getElementById('boundPass').value;
+  } else {
+    username = document.getElementById('username').value.trim();
+    password = document.getElementById('password').value;
+    const password2 = document.getElementById('password2').value;
+    if (!username || !password) return show('请填写用户名和密码');
+    if (password !== password2) return show('两次输入的密码不一致');
   }
+  try {
+    await api('/api/auth/register', { method: 'POST', body: { key, username, password } });
+    location.href = '/';
+  } catch (err) {
+    show(err.message);
+  }
+}
+
+document.getElementById('checkBtn').addEventListener('click', checkKey);
+document.getElementById('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkKey(); });
+document.getElementById('activateBtn').addEventListener('click', () => submitRegister(true));
+document.getElementById('registerBtn').addEventListener('click', () => submitRegister(false));
+
+fetch('/api/meta').then((r) => r.json()).then((meta) => {
+  if (!meta.app.registration_open) show('当前没有可用密钥：管理员尚未生成，或已全部用完', 'bad');
 }).catch(() => {});
-document.getElementById('username').focus();
+document.getElementById('key').focus();
 </script>
 </body>
 </html>

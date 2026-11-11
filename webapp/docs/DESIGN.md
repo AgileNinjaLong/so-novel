@@ -117,10 +117,13 @@ FastAPI（app/main.py）
 | --- | --- | --- |
 | `users` | id, username(UNIQUE NOCASE), password_hash, role, status, permanent, expires_at | 账号与有效期 |
 | `sessions` | token_hash(PK), user_id, expires_at, ip, ua | 只存令牌的 sha256 |
-| `tasks` | …, user_id, user_name | 任务归属 |
-| `settings` | key/value | 当前来源、待切换、注册密钥及其生成时间 |
+| `invite_keys` | id, key(UNIQUE), mode(open/bound), days, permanent, username, password_plain, status, used_by… | **一钥一用户**的注册密钥 |
+| `tasks` | …, user_id, user_name, size_bytes, delivered_at | 下载记录；**不含文件内容/路径** |
+| `settings` | key/value | 当前来源、待切换 |
 
-`init_db()` 会对旧库做列迁移（补 `tasks.user_id` / `user_name`），因此升级不需要手工改库。
+`init_db()` 会对旧库做迁移：补 `tasks.user_id` / `user_name` / `size_bytes` / `delivered_at`；
+把历史的 `status='success'` 归一为 `delivered`，并清空文件路径。启动时还会删除旧版本的
+`data/library` 目录（新模型不再保留成品文件）。
 
 ### 注册与登录
 
@@ -129,6 +132,16 @@ FastAPI（app/main.py）
 - 登录成功签发 `nanoid(43)` 会话令牌，写 HttpOnly Cookie，库里只留 sha256；默认 30 天。
 - 登录/注册按 IP 做内存限流（每分钟 8 次），超限 429。
 - 管理员账号由 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 在启动时**创建或同步**（改环境变量即改口令，并清掉旧会话），且被强制设为 `permanent=1`。
+
+### 注册密钥：一钥一用户
+
+- 管理员生成密钥时选**有效期**（1/31/124/372 天或 999999=永久），密钥本身**只能用一次**；
+- 两种模式：
+  - `open`：用户兑换时自己填用户名/密码，账号有效期 = 密钥天数；
+  - `bound`：管理员预置用户名与密码，注册页与后台直接展示这对账号，用户只需「激活并登录」；
+    绑定型只生成 1 把（一把密钥对应一个账号）。
+- 兑换后密钥状态置 `used` 并记录使用者；未使用可撤销、任意可删除记录。
+- 兑换时创建账号：`permanent` 或 `expires_at = now + days`。
 
 ### 密钥算法（ai/nanoid）
 
@@ -140,10 +153,26 @@ step = int(1.6 * mask * size / len(alphabet))
 逐字节取 alphabet[byte & mask]，凑够 size 个字符
 ```
 
-- 注册密钥 21 字符（URL 安全字母表，≈126 bit 熵）；
+- 注册密钥 21 字符（URL 安全字母表，≈126 bit 熵），每把独立生成；
 - 会话令牌 43 字符（≈258 bit 熵）；
 - 碰撞处理：数据库 UNIQUE 约束 + `unique_nanoid()` 重试；
+  `nanoid` 移植时保留了上游「掩码越界字节跳过」的语义（否则小字母表会索引越界）；
 - 口令：`hashlib.scrypt(n=16384, r=8, p=1, 随机盐)`，存 `scrypt$n$r$p$salt$hash`。
+
+### 交付：文件不在服务器留存
+
+上游只能写磁盘，所以服务器只提供**临时中转**：
+
+```
+data/runtime/tmp/<task_id>/…            下载过程中
+→ 任务 ready（记录文件名/大小，DB 不存内容，file_path 仅为临时引用）
+→ GET /api/tasks/{id}/download          256KB 分块流式传输给浏览器
+→ BackgroundTask 在响应结束后删除临时目录，任务变 delivered
+```
+
+- 未接收的临时文件由清扫线程按 `WEBAPP_FILE_TTL_MIN`（默认 120 分钟）删除并标记 `expired`；
+- 服务启动时清空整个 `runtime/tmp`，并把遗留的 `ready` 标记为 `expired`（DB 里不留路径）；
+- 因此数据库只保留「谁、什么时候、下了哪本书、多大、什么状态」，没有小说内容。
 
 ### 有效期数学
 

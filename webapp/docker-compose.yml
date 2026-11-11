@@ -14,8 +14,8 @@ services:
       # 管理员账号：不设置则后台 /admin 无法登录
       ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:?请先在 .env 中设置 ADMIN_PASSWORD}"
-      # 新用户注册后默认赠送天数，0 表示需要管理员手动开通
-      WEBAPP_DEFAULT_GRANT_DAYS: "${WEBAPP_DEFAULT_GRANT_DAYS:-0}"
+      # 下载完成后临时文件的保留分钟数（超时自动删除）
+      WEBAPP_FILE_TTL_MIN: "${WEBAPP_FILE_TTL_MIN:-120}"
       # HTTPS 部署时设为 1
       WEBAPP_COOKIE_SECURE: "${WEBAPP_COOKIE_SECURE:-0}"
       WEBAPP_DEFAULT_SOURCE: "${WEBAPP_DEFAULT_SOURCE:-sonovel}"

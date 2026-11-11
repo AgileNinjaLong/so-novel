@@ -11,12 +11,17 @@ from typing import Any, Iterable
 
 from .config import settings
 
-# 任务状态：queued(排队中) -> running(下载中) -> success/failed/canceled
+# 任务状态：
+# queued(排队中) -> running(下载中) -> ready(待接收) -> delivered(已交付)
+# 另有 failed / canceled / expired(未接收已清理)
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
-STATUS_SUCCESS = "success"
+STATUS_READY = "ready"
+STATUS_DELIVERED = "delivered"
+STATUS_SUCCESS = "delivered"  # 兼容旧代码/测试里的命名
 STATUS_FAILED = "failed"
 STATUS_CANCELED = "canceled"
+STATUS_EXPIRED = "expired"
 
 ROLE_USER = "user"
 ROLE_ADMIN = "admin"
@@ -91,11 +96,30 @@ def init_db() -> None:
                 message TEXT NOT NULL DEFAULT '',
                 file_path TEXT,
                 error TEXT,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                delivered_at TEXT,
                 created_at TEXT NOT NULL,
                 started_at TEXT,
                 finished_at TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_tasks_status_seq ON tasks(status, seq);
+
+            CREATE TABLE IF NOT EXISTS invite_keys (
+                id TEXT PRIMARY KEY,
+                key TEXT NOT NULL UNIQUE,
+                mode TEXT NOT NULL DEFAULT 'open',
+                days INTEGER NOT NULL DEFAULT 0,
+                permanent INTEGER NOT NULL DEFAULT 0,
+                username TEXT,
+                password_plain TEXT,
+                status TEXT NOT NULL DEFAULT 'unused',
+                note TEXT,
+                created_at TEXT NOT NULL,
+                created_by TEXT,
+                used_at TEXT,
+                used_by TEXT,
+                used_by_name TEXT
+            );
             """
         )
         # 兼容旧库：tasks 表可能没有 user_id / user_name
@@ -106,6 +130,16 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE tasks ADD COLUMN user_name TEXT NOT NULL DEFAULT '匿名'"
             )
+        if "size_bytes" not in columns:
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0"
+            )
+        if "delivered_at" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN delivered_at TEXT")
+        # 旧版本把完成状态记为 success 且文件常驻服务器；新模型文件不落库，
+        # 因此历史记录统一视为「已交付」，并清掉文件路径。
+        conn.execute("UPDATE tasks SET status = 'delivered' WHERE status = 'success'")
+        conn.execute("UPDATE tasks SET file_path = NULL WHERE status != 'ready'")
         conn.commit()
 
 
@@ -161,13 +195,8 @@ def set_pending_switch(value: dict[str, Any] | None) -> None:
 
 
 def registration_key() -> str:
+    """旧版「全局注册密钥」：仅为兼容历史数据保留读取，新流程已改为 invite_keys。"""
     return get_setting("registration_key", "") or ""
-
-
-def set_registration_key(key: str, created_by: str = "") -> None:
-    set_setting("registration_key", key)
-    set_setting("registration_key_created_at", _now())
-    set_setting("registration_key_created_by", created_by)
 
 
 # ---------------- 用户 ----------------
@@ -462,6 +491,8 @@ def update_task(task_id: str, **fields: Any) -> None:
         "title",
         "user_id",
         "user_name",
+        "size_bytes",
+        "delivered_at",
     }
     unknown = set(fields) - allowed
     if unknown:
@@ -486,6 +517,7 @@ def finish_task(
     error: str | None = None,
     file_path: str | None = None,
     message: str | None = None,
+    size_bytes: int | None = None,
 ) -> None:
     fields: dict[str, Any] = {"status": status, "finished_at": _now()}
     if error is not None:
@@ -494,7 +526,37 @@ def finish_task(
         fields["file_path"] = file_path
     if message is not None:
         fields["message"] = message[:500]
+    if size_bytes is not None:
+        fields["size_bytes"] = int(size_bytes)
     update_task(task_id, **fields)
+
+
+def mark_delivered(task_id: str) -> None:
+    update_task(
+        task_id,
+        status=STATUS_DELIVERED,
+        delivered_at=_now(),
+        file_path=None,
+        message="已传输到本机，服务器已删除临时文件",
+    )
+
+
+def mark_expired(task_id: str, reason: str = "超过接收时限，临时文件已清理") -> None:
+    update_task(
+        task_id,
+        status=STATUS_EXPIRED,
+        finished_at=_now(),
+        file_path=None,
+        message=reason,
+    )
+
+
+def ready_tasks() -> list[dict[str, Any]]:
+    with _lock:
+        rows = _connection().execute(
+            "SELECT * FROM tasks WHERE status = ? ORDER BY seq ASC", (STATUS_READY,)
+        ).fetchall()
+    return [_row_to_task(r) for r in rows]
 
 
 def cancel_queued(predicate) -> list[dict[str, Any]]:
@@ -539,7 +601,17 @@ def task_counts() -> dict[str, int]:
 
 def purge_tasks(statuses: Iterable[str]) -> list[dict[str, Any]]:
     """删除指定状态的记录（只允许已结束的状态），返回被删除的行。"""
-    wanted = [s for s in statuses if s in {STATUS_FAILED, STATUS_CANCELED, STATUS_SUCCESS}]
+    wanted = [
+        s
+        for s in statuses
+        if s
+        in {
+            STATUS_FAILED,
+            STATUS_CANCELED,
+            STATUS_DELIVERED,
+            STATUS_EXPIRED,
+        }
+    ]
     if not wanted:
         return []
     placeholders = ", ".join("?" for _ in wanted)
@@ -552,3 +624,135 @@ def purge_tasks(statuses: Iterable[str]) -> list[dict[str, Any]]:
             conn.execute(f"DELETE FROM tasks WHERE status IN ({placeholders})", wanted)
             conn.commit()
     return [_row_to_task(r) for r in rows]
+
+
+def recover_pending_ready() -> list[str]:
+    """服务重启：待接收任务的临时文件已不存在，统一标记为过期。"""
+    with _lock:
+        conn = _connection()
+        rows = conn.execute(
+            "SELECT id FROM tasks WHERE status = ?", (STATUS_READY,)
+        ).fetchall()
+        ids = [row["id"] for row in rows]
+        if ids:
+            conn.execute(
+                "UPDATE tasks SET status = ?, finished_at = ?, error = ? WHERE status = ?",
+                (STATUS_EXPIRED, _now(), "服务重启，临时文件已清理", STATUS_READY),
+            )
+            conn.commit()
+    return ids
+
+
+# ---------------- 邀请密钥（一钥一用户） ----------------
+
+
+def _row_to_key(row: sqlite3.Row) -> dict[str, Any]:
+    return dict(row)
+
+
+def invite_key_code_exists(code: str) -> bool:
+    with _lock:
+        row = _connection().execute(
+            "SELECT 1 FROM invite_keys WHERE key = ?", (code,)
+        ).fetchone()
+    return row is not None
+
+
+def create_invite_key(
+    *,
+    key_id: str,
+    code: str,
+    mode: str,
+    days: int,
+    permanent: bool,
+    username: str | None = None,
+    password_plain: str | None = None,
+    note: str = "",
+    created_by: str = "",
+) -> dict[str, Any]:
+    with _lock:
+        conn = _connection()
+        conn.execute(
+            """
+            INSERT INTO invite_keys(id, key, mode, days, permanent, username,
+                                    password_plain, status, note, created_at, created_by)
+            VALUES(?, ?, ?, ?, ?, ?, ?, 'unused', ?, ?, ?)
+            """,
+            (
+                key_id,
+                code,
+                mode,
+                int(days),
+                1 if permanent else 0,
+                username,
+                password_plain,
+                note or "",
+                _now(),
+                created_by or None,
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM invite_keys WHERE id = ?", (key_id,)).fetchone()
+    return _row_to_key(row)
+
+
+def get_invite_key(key_id: str) -> dict[str, Any] | None:
+    with _lock:
+        row = _connection().execute(
+            "SELECT * FROM invite_keys WHERE id = ?", (key_id,)
+        ).fetchone()
+    return _row_to_key(row) if row else None
+
+
+def get_invite_key_by_code(code: str) -> dict[str, Any] | None:
+    with _lock:
+        row = _connection().execute(
+            "SELECT * FROM invite_keys WHERE key = ?", (code,)
+        ).fetchone()
+    return _row_to_key(row) if row else None
+
+
+def list_invite_keys(limit: int = 500) -> list[dict[str, Any]]:
+    with _lock:
+        rows = _connection().execute(
+            "SELECT * FROM invite_keys ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [_row_to_key(r) for r in rows]
+
+
+def mark_invite_key_used(key_id: str, user_id: str, username: str) -> None:
+    with _lock:
+        conn = _connection()
+        conn.execute(
+            "UPDATE invite_keys SET status = 'used', used_at = ?, used_by = ?, "
+            "used_by_name = ? WHERE id = ?",
+            (_now(), user_id, username, key_id),
+        )
+        conn.commit()
+
+
+def revoke_invite_key(key_id: str) -> bool:
+    with _lock:
+        conn = _connection()
+        cur = conn.execute(
+            "UPDATE invite_keys SET status = 'revoked' WHERE id = ? AND status = 'unused'",
+            (key_id,),
+        )
+        conn.commit()
+    return bool(cur.rowcount)
+
+
+def delete_invite_key(key_id: str) -> bool:
+    with _lock:
+        conn = _connection()
+        cur = conn.execute("DELETE FROM invite_keys WHERE id = ?", (key_id,))
+        conn.commit()
+    return bool(cur.rowcount)
+
+
+def invite_key_stats() -> dict[str, int]:
+    with _lock:
+        rows = _connection().execute(
+            "SELECT status, COUNT(*) AS c FROM invite_keys GROUP BY status"
+        ).fetchall()
+    return {row["status"]: int(row["c"]) for row in rows}

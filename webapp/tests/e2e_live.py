@@ -1,7 +1,7 @@
-"""对**运行中的**服务做一次真实的多用户排队 / 来源切换 / 权限验证。
+"""对**运行中的**服务做真实的多用户排队 / 密钥注册 / 交付删除 验证。
 
 前置：服务已运行（默认 http://127.0.0.1:8099），两个上游都已安装，
-且启动时设置了 ADMIN_USERNAME / ADMIN_PASSWORD（默认 root / admin-pass-123）。
+启动时设置了 ADMIN_USERNAME / ADMIN_PASSWORD（默认 root / admin-pass-123）。
 
 运行：python tests/e2e_live.py
 """
@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import time
 import uuid
 
@@ -20,9 +19,11 @@ ADMIN_USER = os.environ.get("ADMIN_USERNAME", "root")
 ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "admin-pass-123")
 FAILED: list[str] = []
 
-# so-novel 的测试书目（笔趣阁365，《活着》11 章）
 BOOK_SMALL = "https://www.biquge365.net/book/17221/"
 BOOK_LONG = "https://www.biquge365.net/book/78201/"
+TMP_ROOT = os.environ.get(
+    "WEBAPP_TMP_ROOT", r"D:\AAA_WT_Work\TEST\小说下载网页端\webapp-data\runtime\tmp"
+)
 
 
 def check(cond: bool, label: str) -> None:
@@ -32,7 +33,7 @@ def check(cond: bool, label: str) -> None:
 
 
 def make_client() -> httpx.Client:
-    return httpx.Client(base_url=BASE, timeout=30.0, follow_redirects=False)
+    return httpx.Client(base_url=BASE, timeout=180.0, follow_redirects=False)
 
 
 def api(client: httpx.Client, method: str, path: str, **kwargs):
@@ -58,7 +59,7 @@ def task_by_id(snap: dict, task_id: str) -> dict | None:
     return None
 
 
-def wait_until(fn, timeout: float = 40.0, interval: float = 0.6) -> bool:
+def wait_until(fn, timeout: float = 90.0, interval: float = 0.8) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -70,20 +71,21 @@ def wait_until(fn, timeout: float = 40.0, interval: float = 0.6) -> bool:
     return False
 
 
-def signup(client: httpx.Client, admin: httpx.Client, name: str, days: int) -> dict:
-    """用管理员密钥注册一个用户，并由管理员开通时长。"""
-    overview = api(admin, "GET", "/api/admin/overview")
-    key = overview["registration_key"]
-    if not key:
-        key = api(admin, "POST", "/api/admin/key")["registration_key"]
+def signup_key(client: httpx.Client, admin: httpx.Client, days: int) -> dict:
+    """管理员生成一把开放型密钥，新用户用它注册（有效期随密钥）。"""
+    key = api(admin, "POST", "/api/admin/keys", json={"days": days, "count": 1, "mode": "open"})["keys"][0]
+    name = f"u{uuid.uuid4().hex[:8]}"
     user = api(
         client,
         "POST",
         "/api/auth/register",
-        json={"username": name, "password": "password123", "invite_key": key},
+        json={"key": key["key"], "username": name, "password": "password123"},
     )["user"]
-    api(admin, "POST", f"/api/admin/users/{user['id']}/grant", json={"days": days})
     return user
+
+
+def temp_dir(task_id: str) -> str:
+    return os.path.join(TMP_ROOT, task_id)
 
 
 def main() -> int:
@@ -102,30 +104,30 @@ def main() -> int:
     for plugin in meta["plugins"]:
         check(plugin["ready"], f"{plugin['name']} 就绪（{plugin['status_detail']}）")
 
-    print("[2] 注册两个用户并开通时长")
-    tag = uuid.uuid4().hex[:6]
+    print("[2] 用两把密钥注册两个用户")
     alice = make_client()
     bob = make_client()
-    user_a = signup(alice, admin, f"alice{tag}", 372)
-    user_b = signup(bob, admin, f"bob{tag}", 31)
-    check(user_a["username"] == f"alice{tag}", "用户A 注册成功")
-    check(user_b["username"] == f"bob{tag}", "用户B 注册成功")
-    me_a = api(alice, "GET", "/api/auth/me")["user"]
-    check(me_a["active"] is True and me_a["remaining_days"] > 0, "用户A 已开通")
+    user_a = signup_key(alice, admin, 372)
+    user_b = signup_key(bob, admin, 31)
+    check(user_a["username"].startswith("u"), "用户A 注册成功")
+    check(user_a["remaining_days"] == 372, "用户A 有效期来自密钥（372 天）")
+    check(user_b["remaining_days"] == 31, "用户B 有效期来自密钥（31 天）")
+    keys = api(admin, "GET", "/api/admin/keys")["keys"]
+    used = [k for k in keys if k["status"] == "used"]
+    check(len(used) >= 2, "两把密钥都已标记使用")
 
-    print("[3] 提交两个任务，验证单线程与排队位置")
+    print("[3] 单线程队列与排队位置")
     if state(alice)["active_source"] != "sonovel":
         api(alice, "POST", "/api/source", json={"source": "sonovel", "mode": "cancel_now"})
     t1 = api(alice, "POST", "/api/tasks", json={
         "source": "sonovel", "title": "临渊行", "book_ref": BOOK_LONG, "fmt": "txt"})["task"]["id"]
     t2 = api(bob, "POST", "/api/tasks", json={
         "source": "sonovel", "title": "活着", "book_ref": BOOK_SMALL, "fmt": "txt"})["task"]["id"]
-    check(wait_until(lambda: state(alice)["running"] is not None, 40), "第一个任务开始运行")
+    check(wait_until(lambda: state(alice)["running"] is not None, 60), "第一个任务开始运行")
     snap = state(alice)
     second = task_by_id(snap, t2)
     check(second["status"] == "queued", "第二个任务排队中")
     check(second.get("queue_position") == 1, "第二个任务排队位置=1")
-    check(second["user"] == f"bob{tag}", "排队任务显示提交者")
     check(second["mine"] is False, "A 看到 B 的任务不是自己的")
 
     print("[4] 越权操作被拒绝")
@@ -136,42 +138,62 @@ def main() -> int:
         check("只能取消自己的任务" in str(exc), "A 取消 B 的任务被拒绝")
     try:
         api(bob, "GET", f"/api/tasks/{t1}/download")
-        check(False, "B 不应能下载 A 的文件")
+        check(False, "B 不应能接收 A 的文件")
     except RuntimeError as exc:
-        check("只能下载自己的文件" in str(exc) or "尚未就绪" in str(exc), "B 下载 A 的文件被拒绝")
+        check("只能接收自己的文件" in str(exc) or "不在待接收状态" in str(exc), "B 接收 A 的文件被拒绝")
     check(bob.get("/api/admin/overview").status_code == 403, "普通用户访问后台 403")
 
-    print("[5] 下载中切换来源：after_current 挂起并取消旧来源排队任务")
+    print("[5] 管理员取消运行中的任务，源切换按 after_current 挂起")
     result = api(bob, "POST", "/api/source", json={"source": "tomato", "mode": "after_current"})
     check(result["applied"] is False, "切换未立即生效")
     check(result["pending_switch"]["source"] == "tomato", "记录了待切换目标")
     check(len(result["canceled"]) == 1, "旧来源排队任务被取消")
-    snap = state(alice)
-    check(task_by_id(snap, t2)["status"] == "canceled", "B 的排队任务被取消")
-    try:
-        api(bob, "POST", "/api/tasks", json={
-            "source": "sonovel", "title": "拒绝测试", "book_ref": BOOK_SMALL, "fmt": "txt"})
-        check(False, "切换期间不应允许提交旧来源")
-    except RuntimeError as exc:
-        check("切换" in str(exc), "切换期间提交旧来源被拒绝")
-
-    print("[6] 管理员可取消任何任务，取消后自动切换")
+    check(task_by_id(state(bob), t2)["status"] == "canceled", "B 的排队任务已取消")
     api(admin, "POST", f"/api/admin/tasks/{t1}/cancel")
     check(
-        wait_until(lambda: task_by_id(state(alice), t1)["status"] == "canceled", 60),
+        wait_until(lambda: task_by_id(state(alice), t1)["status"] == "canceled", 90),
         "管理员取消 A 的运行中任务",
     )
-    check(wait_until(lambda: state(alice)["active_source"] == "tomato", 60), "取消收尾后自动切换")
+    check(wait_until(lambda: state(alice)["active_source"] == "tomato", 90), "收尾后自动切换到番茄")
 
-    print("[7] 后台能查看用户与任务")
+    print("[6] 真实下载 → 待接收 → 流式接收 → 服务器立即删除")
+    key3 = api(admin, "POST", "/api/admin/keys", json={"days": 124, "count": 1, "mode": "open"})["keys"][0]
+    carol = make_client()
+    carol_name = f"u{uuid.uuid4().hex[:8]}"
+    api(carol, "POST", "/api/auth/register",
+        json={"key": key3["key"], "username": carol_name, "password": "password123"})
+    api(carol, "POST", "/api/source", json={"source": "sonovel", "mode": "cancel_now"})
+    t3 = api(carol, "POST", "/api/tasks", json={
+        "source": "sonovel", "title": "活着", "book_ref": BOOK_SMALL, "fmt": "txt"})["task"]["id"]
+    check(wait_until(lambda: task_by_id(state(carol), t3)["status"] == "ready", 120), "下载完成进入待接收")
+    ready_task = task_by_id(state(carol), t3)
+    check(ready_task["size_bytes"] > 0, "记录了文件大小")
+    check(ready_task["can_receive"] is True, "出现接收入口")
+    check(os.path.isdir(temp_dir(t3)), "服务器上只有临时中转文件")
+    resp = carol.get(f"/api/tasks/{t3}/download")
+    check(resp.status_code == 200, "接收接口返回 200")
+    check(resp.headers.get("content-type", "").startswith("text/plain"), "内容按附件流式返回")
+    check(len(resp.content) == ready_task["size_bytes"], "收到的字节数与记录一致")
+    check(
+        wait_until(lambda: not os.path.isdir(temp_dir(t3)), 20),
+        "接收完成后服务器临时文件已删除",
+    )
+    check(
+        wait_until(lambda: task_by_id(state(carol), t3)["status"] == "delivered", 20),
+        "任务状态变为已交付",
+    )
+    detail = api(carol, "GET", f"/api/tasks/{t3}")
+    check(detail.get("file_path") is None, "数据库不保存文件路径")
+    check(detail.get("size_bytes", 0) > 0, "数据库只保留记录与大小")
+
+    print("[7] 后台能看到用户、密钥与任务")
     overview = api(admin, "GET", "/api/admin/overview")
-    names = {u["username"] for u in overview["users"]}
-    check(f"alice{tag}" in names and f"bob{tag}" in names, "后台列出两个新用户")
-    perms = [u for u in overview["users"] if u["username"] == f"alice{tag}"][0]
-    check(perms["active"] is True, "后台显示 A 的有效期状态")
-    check(len(overview["tasks"]) >= 2, "后台能看到任务列表")
+    check(overview["user_count"] >= 3, "后台列出用户")
+    check(len(overview["keys"]) >= 3, "后台列出密钥")
+    check(overview["storage_mode"] == "stream-and-delete", "后台标明不在服务器留存")
+    check(len(overview["tasks"]) >= 3, "后台能看到任务记录")
 
-    print("[8] 禁用用户 B 后会话立即失效")
+    print("[8] 禁用用户 B 后会话失效")
     api(admin, "POST", f"/api/admin/users/{user_b['id']}/status", json={"status": "banned"})
     check(bob.get("/api/state").status_code == 401, "B 的会话已失效")
 

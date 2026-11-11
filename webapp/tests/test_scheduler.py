@@ -153,9 +153,17 @@ def main() -> int:
     except EnqueueError as exc:
         check("切换" in str(exc), "旧来源提交被拒绝")
     check(
-        wait_until(lambda: store.get_task(running_id)["status"] == "success", 20),
-        "当前任务正常完成（未被中断）",
+        wait_until(lambda: store.get_task(running_id)["status"] == "ready", 20),
+        "当前任务正常完成并进入待接收（未被中断）",
     )
+    # 待接收的临时文件应存在，交付后删除
+    task_row = store.get_task(running_id)
+    check(bool(task_row["size_bytes"]), "记录了文件大小（数据库不存文件内容）")
+    delivered_path = scheduler.deliverable_path(running_id)
+    check(delivered_path is not None and delivered_path.is_file(), "临时文件存在，等待接收")
+    scheduler.complete_delivery(running_id)
+    check(store.get_task(running_id)["status"] == "delivered", "接收后状态变为已交付")
+    check(scheduler.deliverable_path(running_id) is None, "交付后临时文件已删除")
     check(wait_until(lambda: store.active_source("alpha") == "beta", 15), "收尾后自动切换到来源B")
     check(store.pending_switch() is None, "待切换标记已清除")
 

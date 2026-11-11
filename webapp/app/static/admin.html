@@ -40,16 +40,37 @@
 
   <section class="card">
     <div class="queue-head">
-      <h2>注册密钥</h2>
-      <div class="queue-actions">
-        <button id="rotateKeyBtn" class="btn small primary">生成新密钥</button>
-        <button id="clearKeyBtn" class="btn small ghost">清空（关闭注册）</button>
-      </div>
+      <h2>生成注册密钥</h2>
+      <span class="badge info" id="keyStatBadge"></span>
     </div>
-    <p class="hint">用户注册时必须输入该密钥。清空后任何人都无法注册；已登录用户不受影响。密钥由 ai/nanoid 算法生成（21 字符 ≈ 126 bit 熵），数据库唯一约束保证不重复。</p>
-    <div id="keyBox" class="key-box">尚未生成</div>
-    <p id="keyMeta" class="hint" style="margin-top:8px"></p>
+    <p class="hint">一钥一用户、单次使用；每把密钥自带有效期。开放型由用户自己填账号密码，绑定型由你预置账号密码（会显示在下方列表，便于转交）。</p>
+    <div class="row">
+      <label class="muted">有效期</label>
+      <select id="keyDays" style="max-width:150px">
+        <option value="1">1 天</option>
+        <option value="31">31 天</option>
+        <option value="124">124 天</option>
+        <option value="372" selected>372 天</option>
+        <option value="999999">永久</option>
+      </select>
+      <label class="muted">类型</label>
+      <select id="keyMode" style="max-width:170px">
+        <option value="open">开放型（自填账号）</option>
+        <option value="bound">绑定型（预置账号）</option>
+      </select>
+      <label class="muted" id="keyCountLabel">数量</label>
+      <input id="keyCount" type="text" value="1" style="max-width:90px" title="开放型可一次生成多把">
+    </div>
+    <div class="row hidden" id="boundFields">
+      <input id="keyUsername" type="text" placeholder="预置用户名（3-24 位）">
+      <input id="keyPassword" type="password" placeholder="预置密码（≥8 位）">
+      <input id="keyNote" type="text" placeholder="备注（可选，如给谁）">
+    </div>
+    <div class="row">
+      <button id="genKeyBtn" class="btn primary">生成密钥</button>
+    </div>
     <p id="keyMsg" class="msg"></p>
+    <div id="keyList" class="user-list" style="margin-top:12px"></div>
   </section>
 
   <section class="card">

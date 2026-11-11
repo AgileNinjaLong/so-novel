@@ -51,11 +51,13 @@ def nanoid(
     while True:
         random_bytes = secrets.token_bytes(step)
         for index in range(step - 1, -1, -1):
-            char = alphabet[random_bytes[index] & mask]
-            if char:
-                out.append(char)
-                if len(out) == size:
-                    return "".join(out)
+            # 与 ai/nanoid 一致：掩码结果可能越界，越界时跳过该字节
+            alphabet_index = random_bytes[index] & mask
+            if alphabet_index >= len(alphabet):
+                continue
+            out.append(alphabet[alphabet_index])
+            if len(out) == size:
+                return "".join(out)
         step = int(step * 1.1) + 1
 
 

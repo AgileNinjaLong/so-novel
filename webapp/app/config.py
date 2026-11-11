@@ -50,6 +50,8 @@ class Settings:
     poll_interval_ms: int = field(default_factory=lambda: _env_int("WEBAPP_POLL_MS", 1500))
     # 单任务超时（秒），0 表示不限制
     task_timeout_sec: int = field(default_factory=lambda: _env_int("WEBAPP_TASK_TIMEOUT", 0))
+    # 下载完成后临时文件保留多少分钟（供用户接收），超时自动删除
+    file_ttl_min: int = field(default_factory=lambda: _env_int("WEBAPP_FILE_TTL_MIN", 120))
 
     # ---- so-novel（freeok/so-novel，Java CLI）----
     sonovel_java: str = field(default_factory=lambda: _env_str("SONOVEL_JAVA", "java"))
@@ -92,14 +94,20 @@ class Settings:
         return self.data_dir / "webapp.sqlite3"
 
     @property
-    def library_dir(self) -> Path:
-        d = self.data_dir / "library"
+    def runtime_dir(self) -> Path:
+        d = self.data_dir / "runtime"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     @property
-    def runtime_dir(self) -> Path:
-        d = self.data_dir / "runtime"
+    def temp_root(self) -> Path:
+        """下载中转目录：文件只在这里短暂停留，传完即删。"""
+        d = self.runtime_dir / "tmp"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def temp_dir_for(self, task_id: str) -> Path:
+        d = self.temp_root / task_id
         d.mkdir(parents=True, exist_ok=True)
         return d
 

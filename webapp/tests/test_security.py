@@ -49,6 +49,16 @@ def main() -> int:
         value = nanoid(size)
         check(len(value) == size, f"nanoid({size}) 长度正确")
 
+    print("[3b] 小字母表（掩码会越界，应跳过而不是报错）")
+    small = "abcdefghjkmnpqrstuvwxyz23456789"  # 31 个字符，掩码 31 会越界
+    for _ in range(200):
+        value = nanoid(12, small)
+        check(len(value) == 12 and all(c in small for c in value), "小字母表生成合法") if _ < 1 else None
+    check(all(c in small for c in nanoid(12, small)), "小字母表字符均合法")
+    binary = "01"
+    value = nanoid(16, binary)
+    check(len(value) == 16 and set(value) <= set(binary), "二进制字母表可用")
+
     print("[4] unique_nanoid 碰撞重试")
     conflict = "AAAAAAAAAAAAAAAAAAAAA"
     calls = {"n": 0}

@@ -14,6 +14,7 @@ from __future__ import annotations
 import shutil
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from . import store
@@ -21,6 +22,21 @@ from .config import settings
 from .plugins.base import CanceledError, Plugin
 
 PRUNE_KEEP = 200
+
+
+def _human_size(num: int) -> str:
+    size = float(num)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.1f} {unit}".replace(".0 ", " ")
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+def _wipe_temp_root() -> None:
+    """启动时清空中转目录：旧进程留下的临时文件不应继续存在。"""
+    shutil.rmtree(settings.temp_root, ignore_errors=True)
+    settings.temp_root.mkdir(parents=True, exist_ok=True)
 
 
 class SwitchError(Exception):
@@ -40,8 +56,10 @@ class Scheduler:
         self._cv = threading.Condition()
         self._running_task_id: str | None = None
         self._cancels: dict[str, threading.Event] = {}
+        self._deliverables: dict[str, Path] = {}
         self._stop = False
         self._thread: threading.Thread | None = None
+        self._sweeper: threading.Thread | None = None
 
     # ---------------- 生命周期 ----------------
     def start(self) -> None:
@@ -49,10 +67,17 @@ class Scheduler:
             store.set_setting("active_source", self._default_source)
         # 重启后遗留的 running 任务不可能继续，直接标记失败
         store.recover_after_restart()
+        # 待接收任务的临时文件在重启后已无意义
+        store.recover_pending_ready()
+        _wipe_temp_root()
         self._thread = threading.Thread(
             target=self._worker_loop, name="novel-download-worker", daemon=True
         )
         self._thread.start()
+        self._sweeper = threading.Thread(
+            target=self._sweep_loop, name="novel-temp-sweeper", daemon=True
+        )
+        self._sweeper.start()
 
     def shutdown(self) -> None:
         with self._cv:
@@ -93,13 +118,18 @@ class Scheduler:
                 "created_at": task["created_at"],
                 "started_at": task["started_at"],
                 "finished_at": task["finished_at"],
-                "has_file": bool(task["file_path"]) if can_manage else False,
+                "delivered_at": task["delivered_at"],
+                "size_bytes": task["size_bytes"] if can_manage else 0,
+                "book_ref": task["book_ref"] if can_manage else None,
+                "has_file": can_manage and task["status"] == store.STATUS_READY,
                 "mine": mine,
                 "can_cancel": can_manage
                 and task["status"] in {store.STATUS_QUEUED, store.STATUS_RUNNING},
-                "can_download": can_manage
-                and task["status"] == store.STATUS_SUCCESS
-                and bool(task["file_path"]),
+                "can_receive": can_manage and task["status"] == store.STATUS_READY,
+                "can_retry": can_manage
+                and task["status"]
+                in {store.STATUS_DELIVERED, store.STATUS_EXPIRED, store.STATUS_FAILED,
+                    store.STATUS_CANCELED},
             }
             if task["status"] == store.STATUS_QUEUED:
                 item["queue_position"] = positions.get(task["id"], 0)
@@ -178,6 +208,19 @@ class Scheduler:
                 )
                 self._cv.notify_all()
                 return {"canceled": True, "was_running": False}
+
+            if task["status"] == store.STATUS_READY:
+                # 待接收的文件直接丢弃
+                self._drop_temp(task_id)
+                store.finish_task(
+                    task_id,
+                    store.STATUS_CANCELED,
+                    message="已取消，临时文件已删除",
+                    error="已取消",
+                )
+                self._cv.notify_all()
+                return {"canceled": True, "was_running": False}
+
             if task["status"] == store.STATUS_RUNNING:
                 event = self._cancels.get(task_id)
                 if event is not None:
@@ -196,11 +239,11 @@ class Scheduler:
     def cleanup_finished(
         self, statuses: tuple[str, ...] = (store.STATUS_FAILED, store.STATUS_CANCELED)
     ) -> dict[str, Any]:
-        """删除已结束的任务记录及其落盘目录（默认只清理失败/取消，保留成功的下载）。"""
+        """删除已结束的任务记录及其临时目录（默认只清理失败/取消，保留已交付的记录）。"""
         with self._cv:
             removed = store.purge_tasks(statuses)
             for task in removed:
-                shutil.rmtree(settings.library_dir / task["id"], ignore_errors=True)
+                self._drop_temp(task["id"])
             self._cv.notify_all()
         return {"removed": len(removed), "ids": [t["id"] for t in removed]}
 
@@ -338,7 +381,19 @@ class Scheduler:
                 cancel_event = threading.Event()
                 self._cancels[task["id"]] = cancel_event
 
-            self._run_one(task, cancel_event)
+            try:
+                self._run_one(task, cancel_event)
+            except Exception as exc:  # noqa: BLE001 - 任何插件/IO 异常都不能拖垮工作线程
+                try:
+                    self._drop_temp(task["id"])
+                    store.finish_task(
+                        task["id"],
+                        store.STATUS_FAILED,
+                        error=f"内部错误：{exc}",
+                        message="下载失败",
+                    )
+                except Exception:
+                    pass
 
             with self._cv:
                 self._running_task_id = None
@@ -398,14 +453,17 @@ class Scheduler:
                 task=task,
                 progress=progress,
                 cancel_event=cancel_event,
-                library_dir=str(settings.library_dir),
+                # 上游只能写磁盘，这里给每个任务一个临时目录；交付后立刻删除
+                library_dir=str(settings.temp_dir_for(task["id"])),
             )
         except CanceledError:
+            self._drop_temp(task["id"])
             store.finish_task(
                 task["id"], store.STATUS_CANCELED, message="已取消", error="已取消"
             )
             return
         except Exception as exc:  # noqa: BLE001 - 上游异常统一落库
+            self._drop_temp(task["id"])
             if cancel_event.is_set():
                 store.finish_task(
                     task["id"], store.STATUS_CANCELED, message="已取消", error=str(exc)[:2000]
@@ -417,19 +475,84 @@ class Scheduler:
             return
 
         if cancel_event.is_set():
+            self._drop_temp(task["id"])
             store.finish_task(
                 task["id"], store.STATUS_CANCELED, message="已取消", error="已取消"
             )
             return
+
+        path = Path(result.file_path) if result.file_path else None
+        if path is None or not path.is_file() or path.stat().st_size <= 0:
+            self._drop_temp(task["id"])
+            store.finish_task(
+                task["id"],
+                store.STATUS_FAILED,
+                error="下载结束但没有生成文件",
+                message="下载失败",
+            )
+            return
+
+        size = path.stat().st_size
+        self._deliverables[task["id"]] = path
         store.update_task(task["id"], progress=100.0)
         store.finish_task(
             task["id"],
-            store.STATUS_SUCCESS,
-            file_path=result.file_path,
-            message="下载完成",
+            store.STATUS_READY,
+            message=f"文件已就绪（{_human_size(size)}），请尽快点击接收；服务器不留存",
+            size_bytes=size,
+            file_path=str(path),
         )
         if result.title:
             try:
                 store.update_task(task["id"], title=result.title)
             except Exception:
                 pass
+
+    # ---------------- 交付（流式传输后删除） --------------
+    def deliverable_path(self, task_id: str) -> Path | None:
+        path = self._deliverables.get(task_id)
+        if path and path.is_file():
+            return path
+        # 兜底：按任务临时目录找（进程重启后字典会丢失，此时由 TTL 清理）
+        candidates = list((settings.temp_root / task_id).rglob("*"))
+        files = [p for p in candidates if p.is_file() and p.stat().st_size > 0]
+        if files:
+            return max(files, key=lambda p: p.stat().st_size)
+        return None
+
+    def complete_delivery(self, task_id: str) -> None:
+        """文件传输完成后调用：删除临时文件并标记已交付。"""
+        self._drop_temp(task_id)
+        store.mark_delivered(task_id)
+
+    def _drop_temp(self, task_id: str) -> None:
+        self._deliverables.pop(task_id, None)
+        shutil.rmtree(settings.temp_root / task_id, ignore_errors=True)
+
+    def _sweep_loop(self) -> None:
+        """定期清理超过接收时限的临时文件。"""
+        interval = 60
+        while True:
+            with self._cv:
+                if self._stop:
+                    return
+                self._cv.wait(timeout=interval)
+            if self._stop:
+                return
+            try:
+                self._sweep_once()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[scheduler] 清理临时文件失败: {exc}")
+
+    def _sweep_once(self) -> None:
+        ttl_seconds = max(1, settings.file_ttl_min) * 60
+        now = time.time()
+        for task in store.ready_tasks():
+            task_dir = settings.temp_root / task["id"]
+            age = now - task_dir.stat().st_mtime if task_dir.is_dir() else ttl_seconds + 1
+            if age > ttl_seconds:
+                self._drop_temp(task["id"])
+                store.mark_expired(task["id"])
+        # 清理没有对应记录的孤儿目录
+        with self._cv:
+            self._cv.notify_all()

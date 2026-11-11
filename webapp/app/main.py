@@ -6,10 +6,17 @@ import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from . import auth, store, validity
@@ -17,7 +24,7 @@ from .config import settings
 from .plugins import build_plugins, default_source, describe_plugin
 from .plugins.base import Plugin
 from .scheduler import EnqueueError, Scheduler, SwitchError
-from .security import new_registration_key, unique_nanoid
+from .security import hash_password, unique_nanoid
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -28,6 +35,10 @@ state: dict[str, Any] = {}
 async def lifespan(app: FastAPI):
     store.init_db()
     store.purge_expired_sessions()
+    # 旧版本曾把小说长期保存在 data/library；新模型不保留任何成品文件
+    import shutil
+
+    shutil.rmtree(settings.data_dir / "library", ignore_errors=True)
     plugins: dict[str, Plugin] = build_plugins()
     scheduler = Scheduler(plugins, default_source(plugins))
     scheduler.start()
@@ -61,7 +72,7 @@ async def gate(request: Request, call_next):
         if auth.current_user(request) is not None:
             return RedirectResponse("/", status_code=303)
         return await call_next(request)
-    if path in {"/api/auth/login", "/api/auth/register", "/api/meta"}:
+    if path in {"/api/auth/login", "/api/auth/register", "/api/auth/key-info", "/api/meta"}:
         return await call_next(request)
 
     user = auth.current_user(request)
@@ -99,18 +110,27 @@ async def api_me(request: Request):
 
 @app.post("/api/auth/register")
 async def api_register(request: Request, payload: dict[str, Any] = Body(...)):
+    key = str(payload.get("key") or payload.get("invite_key") or "").strip()
     username = str(payload.get("username") or "")
     password = str(payload.get("password") or "")
-    invite = str(payload.get("invite_key") or "")
-    if not store.registration_key():
-        raise HTTPException(status_code=403, detail="管理员尚未生成注册密钥，当前无法注册")
+    if not key:
+        raise HTTPException(status_code=400, detail="请填写注册密钥")
+    info = await run_in_threadpool(auth.key_public_info, key)
+    if not info.get("valid"):
+        raise HTTPException(status_code=403, detail=info.get("reason") or "密钥不可用")
     user = await run_in_threadpool(
-        auth.register_user, username, password, invite, ip=auth.client_ip(request)
+        auth.redeem_key, key, username, password, ip=auth.client_ip(request)
     )
     token, ttl = auth.issue_session(user, request)
     return _set_session(
         JSONResponse({"user": auth.user_public(user)}, status_code=201), token, ttl
     )
+
+
+@app.get("/api/auth/key-info")
+async def api_key_info(key: str):
+    """注册页先查询密钥类型：开放型需自填账号密码，绑定型直接给预置账号。"""
+    return await run_in_threadpool(auth.key_public_info, key)
 
 
 @app.post("/api/auth/login")
@@ -142,15 +162,15 @@ async def api_logout(request: Request):
 @app.get("/api/meta")
 async def api_meta(request: Request):
     plugins: dict[str, Plugin] = state["plugins"]
-    scheduler: Scheduler = state["scheduler"]
     user = auth.current_user(request)
+    key_stats = store.invite_key_stats()
     return {
         "app": {
             "active_source": store.active_source(default_source(plugins)),
             "pending_switch": store.pending_switch(),
             "poll_ms": settings.poll_interval_ms,
-            "registration_open": bool(store.registration_key()),
-            "password_required": True,
+            "registration_open": key_stats.get("unused", 0) > 0,
+            "unused_keys": key_stats.get("unused", 0),
             "cookie_secure": settings.cookie_secure,
         },
         "user": auth.user_public(user) if user else None,
@@ -281,28 +301,82 @@ async def api_cancel_task(request: Request, task_id: str):
 
 @app.get("/api/tasks/{task_id}/download")
 async def api_download(request: Request, task_id: str):
+    """把临时文件流式传给用户浏览器，传输结束立刻删除服务器上的文件。"""
     user = request.state.user
     task = store.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     if task["user_id"] != user["id"] and user["role"] != store.ROLE_ADMIN:
-        raise HTTPException(status_code=403, detail="只能下载自己的文件")
-    if task["status"] != store.STATUS_SUCCESS or not task["file_path"]:
-        raise HTTPException(status_code=409, detail="文件尚未就绪")
-    path = Path(task["file_path"])
-    if not path.is_file():
-        raise HTTPException(status_code=410, detail="文件已不存在")
-    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return FileResponse(path, media_type=media_type, filename=path.name)
+        raise HTTPException(status_code=403, detail="只能接收自己的文件")
+    if task["status"] != store.STATUS_READY:
+        raise HTTPException(
+            status_code=409,
+            detail="文件不在待接收状态（可能已接收、已过期或仍在下载）",
+        )
+
+    scheduler: Scheduler = state["scheduler"]
+    path = scheduler.deliverable_path(task_id)
+    if path is None or not path.is_file():
+        store.mark_expired(task_id, "临时文件已不存在，请重新下载")
+        raise HTTPException(status_code=410, detail="临时文件已失效，请重新发起下载")
+
+    size = path.stat().st_size
+    filename = path.name
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    disposition = f"attachment; filename*=utf-8''{quote(filename)}"
+
+    def iter_file():
+        with open(path, "rb") as fp:
+            while True:
+                chunk = fp.read(256 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+
+    # 传输结束后（无论成功与否）删除临时文件
+    cleanup = BackgroundTask(scheduler.complete_delivery, task_id)
+    return StreamingResponse(
+        iter_file(),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": disposition,
+            "Content-Length": str(size),
+        },
+        background=cleanup,
+    )
+
+
+@app.post("/api/tasks/{task_id}/retry")
+async def api_retry_task(request: Request, task_id: str):
+    """按原参数重新排队（文件已被接收或过期后使用）。"""
+    user = auth.require_active_user(request)
+    old = store.get_task(task_id)
+    if old is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if old["user_id"] != user["id"] and user["role"] != store.ROLE_ADMIN:
+        raise HTTPException(status_code=403, detail="只能重试自己的任务")
+    scheduler: Scheduler = state["scheduler"]
+    try:
+        result = scheduler.enqueue(
+            source=old["source"],
+            user_id=user["id"],
+            user_name=user["username"],
+            title=old["title"],
+            book_ref=old["book_ref"],
+            fmt=old["fmt"],
+        )
+    except EnqueueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return JSONResponse(result, status_code=201)
 
 
 @app.post("/api/cleanup")
 async def api_cleanup(request: Request, payload: dict[str, Any] | None = Body(default=None)):
     auth.require_admin(request)
     scheduler: Scheduler = state["scheduler"]
-    statuses = (store.STATUS_FAILED, store.STATUS_CANCELED)
-    if payload and payload.get("include_success"):
-        statuses = statuses + (store.STATUS_SUCCESS,)
+    statuses = (store.STATUS_FAILED, store.STATUS_CANCELED, store.STATUS_EXPIRED)
+    if payload and payload.get("include_delivered"):
+        statuses = statuses + (store.STATUS_DELIVERED,)
     return scheduler.cleanup_finished(statuses)
 
 
@@ -312,11 +386,8 @@ async def api_cleanup(request: Request, payload: dict[str, Any] | None = Body(de
 @app.get("/api/admin/overview")
 async def api_admin_overview(request: Request):
     auth.require_admin(request)
-    key = store.registration_key()
     scheduler: Scheduler = state["scheduler"]
     return {
-        "registration_key": key,
-        "registration_key_created_at": store.get_setting("registration_key_created_at"),
         "users": [_admin_user_view(u) for u in store.list_users()],
         "user_count": store.count_users(),
         "task_counts": store.task_counts(),
@@ -324,32 +395,76 @@ async def api_admin_overview(request: Request):
         "queue_length": len(store.queued_tasks()),
         "grant_presets": list(validity.GRANT_PRESETS),
         "max_days": validity.MAX_DAYS,
+        "keys": [_key_view(k) for k in store.list_invite_keys()],
+        "key_stats": store.invite_key_stats(),
+        "file_ttl_min": settings.file_ttl_min,
+        "storage_mode": "stream-and-delete",
         "tasks": scheduler.snapshot(request.state.user)["tasks"],
     }
 
 
-@app.post("/api/admin/key")
-async def api_admin_rotate_key(request: Request):
-    admin = auth.require_admin(request)
-
-    def exists(key: str) -> bool:
-        return store.registration_key() == key
-
-    key = unique_nanoid(21, exists)
-    store.set_registration_key(key, created_by=admin["username"])
+@app.get("/api/admin/keys")
+async def api_admin_keys(request: Request):
+    auth.require_admin(request)
     return {
-        "registration_key": key,
-        "created_at": store.get_setting("registration_key_created_at"),
+        "keys": [_key_view(k) for k in store.list_invite_keys()],
+        "stats": store.invite_key_stats(),
+        "presets": list(validity.GRANT_PRESETS),
     }
 
 
-@app.delete("/api/admin/key")
-async def api_admin_clear_key(request: Request):
+@app.post("/api/admin/keys")
+async def api_admin_create_keys(request: Request, payload: dict[str, Any] = Body(...)):
+    admin = auth.require_admin(request)
+    days_raw = payload.get("days")
+    try:
+        days = int(days_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="days 必须是整数")
+    try:
+        count = int(payload.get("count") or 1)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="count 必须是整数")
+    mode = str(payload.get("mode") or "open")
+    created = await run_in_threadpool(
+        auth.generate_invite_keys,
+        days=days,
+        count=count,
+        mode=mode,
+        username=str(payload.get("username") or ""),
+        password=str(payload.get("password") or ""),
+        note=str(payload.get("note") or ""),
+        created_by=admin["username"],
+    )
+    return {"keys": [_key_view(k) for k in created]}
+
+
+@app.delete("/api/admin/keys/{key_id}")
+async def api_admin_revoke_key(request: Request, key_id: str, hard: bool = False):
     auth.require_admin(request)
-    store.delete_setting("registration_key")
-    store.delete_setting("registration_key_created_at")
-    store.delete_setting("registration_key_created_by")
-    return {"registration_key": ""}
+    row = store.get_invite_key(key_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="密钥不存在")
+    if hard:
+        store.delete_invite_key(key_id)
+        return {"deleted": True}
+    if not store.revoke_invite_key(key_id):
+        raise HTTPException(status_code=409, detail="只有未使用的密钥可以撤销")
+    return {"revoked": True}
+
+
+@app.post("/api/admin/users/{user_id}/password")
+async def api_admin_reset_password(request: Request, user_id: str):
+    auth.require_admin(request)
+    target = store.get_user(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    from .security import nanoid
+
+    new_password = nanoid(12, "abcdefghjkmnpqrstuvwxyz23456789")
+    store.update_user(user_id, password_hash=hash_password(new_password))
+    store.delete_user_sessions(user_id)
+    return {"user": _admin_user_view(store.get_user(user_id) or target), "password": new_password}
 
 
 @app.post("/api/admin/users/{user_id}/grant")
@@ -408,6 +523,25 @@ async def api_admin_cancel_task(request: Request, task_id: str):
     if store.get_task(task_id) is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return state["scheduler"].cancel(task_id)
+
+
+def _key_view(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "key": row["key"],
+        "mode": row["mode"],
+        "days": row["days"],
+        "permanent": bool(row["permanent"]),
+        "days_text": "永久" if row["permanent"] else f"{row['days']} 天",
+        "username": row.get("username") or "",
+        "password": row.get("password_plain") or "",
+        "status": row["status"],
+        "note": row.get("note") or "",
+        "created_at": row["created_at"],
+        "created_by": row.get("created_by") or "",
+        "used_at": row.get("used_at"),
+        "used_by_name": row.get("used_by_name") or "",
+    }
 
 
 def _admin_user_view(user: dict[str, Any]) -> dict[str, Any]:
