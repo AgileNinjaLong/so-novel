@@ -281,6 +281,9 @@ class SoNovelPlugin:
         env = dict(os.environ)
         env["JAVA_TOOL_OPTIONS"] = ""
 
+        # 上游把日志写在共享的 cwd/logs 下，必须只认「本任务开始之后」写出的日志，
+        # 否则会读到上一个任务的日志，导致书名/总章数串台。
+        started_at = time.time() - 2
         proc = spawn(argv, cwd=str(work), env=env)
         with self._lock:
             self._procs[task["id"]] = proc
@@ -298,12 +301,11 @@ class SoNovelPlugin:
             if match:
                 state["total"] = int(match.group(1))
             match_title = TITLE_RE.search(line)
-            if match_title:
+            if match_title and not state["title"]:
+                # 仅用于日志/提示，绝不覆盖用户提交的书名
                 state["title"] = match_title.group(1)
                 state["author"] = match_title.group(2)
-                progress(
-                    title=state["title"], message=f"正在下载《{state['title']}》"
-                )
+                progress(message=f"正在下载《{task['title']}》")
             if "[ERROR]" in line or "[WARN]" in line:
                 state["error"] = line[:300]
 
@@ -325,13 +327,13 @@ class SoNovelPlugin:
                 # 进度条关闭时逐章日志会走控制台；若上游把该行吞掉，则回落到读日志文件
                 if total <= 0 and time.time() - last_log_check > 2.0:
                     last_log_check = time.time()
-                    title, author, log_total = _read_log_info(work)
+                    title, author, log_total = _read_log_info(work, since=started_at)
                     if log_total > 0:
                         state["total"] = log_total
                     if title and not state["title"]:
                         state["title"] = title
                         state["author"] = author
-                        progress(title=title, message=f"正在下载《{title}》")
+                        progress(message=f"正在下载《{task['title']}》")
                     total = state["total"]
                 done = _count_chapters(download_dir)
                 if total > 0:
@@ -363,7 +365,7 @@ class SoNovelPlugin:
         # 收尾：产物判定（退出码不可信）
         artifact = _find_artifact(download_dir, task["fmt"])
         if artifact is None:
-            tail = _tail_log(work, state["title"], state["author"])
+            tail = _tail_log(work, state["title"], state["author"], since=started_at)
             shutil.rmtree(download_dir, ignore_errors=True)
             message = "未生成下载文件"
             if state["error"]:
@@ -475,14 +477,20 @@ def _find_artifact(download_dir: Path, fmt: str) -> Path | None:
     return None
 
 
-def _read_log_info(work: Path) -> tuple[str, str, int]:
-    """从上游的章节日志里读取书名/作者/总章节数（控制台被吞时的兜底）。"""
+def _read_log_info(work: Path, since: float = 0.0) -> tuple[str, str, int]:
+    """从上游的章节日志里读取书名/作者/总章节数（控制台被吞时的兜底）。
+
+    `since` 用于只接受本任务开始之后写出的日志，避免读到上一个任务的日志。
+    """
     logs = work / "logs"
     if not logs.is_dir():
         return "", "", 0
-    candidates = sorted(
-        logs.glob("*章节下载*.log"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
+    candidates = [
+        p
+        for p in logs.glob("*章节下载*.log")
+        if p.stat().st_mtime >= since
+    ]
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         return "", "", 0
     try:
@@ -504,18 +512,37 @@ def _read_log_info(work: Path) -> tuple[str, str, int]:
     return title, author, total
 
 
-def _tail_log(work: Path, title: str, author: str, lines: int = 3) -> str:
+def _clean_line(line: str) -> str:
+    """过滤掉控制字符、JAVA_TOOL_OPTIONS 噪声与明显的乱码行。"""
+    text = "".join(ch for ch in line if ch.isprintable() or ch in " \t")
+    text = text.strip()
+    if not text:
+        return ""
+    if "JAVA_TOOL_OPTIONS" in text or "Picked up" in text:
+        return ""
+    # GBK/UTF-8 混用产生的替换字符行直接丢弃
+    bad = sum(1 for ch in text if ch == "\ufffd")
+    if bad > len(text) / 4:
+        return ""
+    return text
+
+
+def _tail_log(work: Path, title: str, author: str, since: float = 0.0, lines: int = 3) -> str:
     """读取上游在 cwd/logs 下写的章节日志尾部，用于失败时给出可读原因。"""
     logs = work / "logs"
     if not logs.is_dir():
         return ""
-    candidates = sorted(logs.glob("*章节下载*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates = [
+        p for p in logs.glob("*章节下载*.log") if p.stat().st_mtime >= since
+    ]
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         return ""
     try:
         content = candidates[0].read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
-    errors = [line for line in content if "[ERROR]" in line or "[WARN]" in line]
+    errors = [ln for ln in content if "[ERROR]" in ln or "[WARN]" in ln]
     picked = errors[-lines:] if errors else content[-lines:]
-    return " | ".join(picked)[:400]
+    cleaned = [c for c in (_clean_line(ln) for ln in picked) if c]
+    return " | ".join(cleaned)[:180]

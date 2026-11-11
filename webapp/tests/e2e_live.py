@@ -149,9 +149,10 @@ def main() -> int:
     print("[4] 越权操作被拒绝")
     try:
         api(alice, "DELETE", f"/api/tasks/{t2}")
-        check(False, "A 不应能取消 B 的任务")
+        check(False, "A 不应能删除 B 的任务")
     except RuntimeError as exc:
-        check("只能取消自己的任务" in str(exc), "A 取消 B 的任务被拒绝")
+        check("只能删除自己的任务" in str(exc) or "只能取消自己的任务" in str(exc),
+              "A 删除 B 的任务被拒绝")
     try:
         api(bob, "GET", f"/api/tasks/{t1}/download")
         check(False, "B 不应能接收 A 的文件")

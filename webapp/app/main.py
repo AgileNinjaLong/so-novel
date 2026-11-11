@@ -286,16 +286,30 @@ async def api_get_task(request: Request, task_id: str):
 
 @app.delete("/api/tasks/{task_id}")
 async def api_cancel_task(request: Request, task_id: str):
+    """删除单条任务：排队/运行中会先取消，待接收会丢弃文件，已结束直接删记录。"""
     user = request.state.user
     task = store.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     if task["user_id"] != user["id"] and user["role"] != store.ROLE_ADMIN:
-        raise HTTPException(status_code=403, detail="只能取消自己的任务")
+        raise HTTPException(status_code=403, detail="只能删除自己的任务")
     try:
-        return state["scheduler"].cancel(task_id)
+        return state["scheduler"].remove_task(task_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="任务不存在")
+
+
+@app.post("/api/tasks/bulk-delete")
+async def api_bulk_delete_tasks(request: Request, payload: dict[str, Any] = Body(...)):
+    """批量删除任务记录（普通用户只能删自己的）。"""
+    user = request.state.user
+    ids = payload.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="请提供要删除的任务 id 列表")
+    if len(ids) > 200:
+        raise HTTPException(status_code=400, detail="一次最多删除 200 条")
+    owner = None if user["role"] == store.ROLE_ADMIN else user["id"]
+    return state["scheduler"].remove_tasks([str(i) for i in ids], user_id=owner)
 
 
 @app.get("/api/tasks/{task_id}/download")
@@ -549,6 +563,26 @@ async def api_admin_delete_user(request: Request, user_id: str):
         raise HTTPException(status_code=400, detail="不能删除自己")
     store.delete_user(user_id)
     return {"ok": True}
+
+
+@app.post("/api/admin/tasks/bulk-delete")
+async def api_admin_bulk_delete(request: Request, payload: dict[str, Any] = Body(...)):
+    auth.require_admin(request)
+    ids = payload.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="请提供要删除的任务 id 列表")
+    if len(ids) > 500:
+        raise HTTPException(status_code=400, detail="一次最多删除 500 条")
+    return state["scheduler"].remove_tasks([str(i) for i in ids])
+
+
+@app.delete("/api/admin/tasks/{task_id}")
+async def api_admin_delete_task(request: Request, task_id: str):
+    auth.require_admin(request)
+    try:
+        return state["scheduler"].remove_task(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="任务不存在")
 
 
 @app.post("/api/admin/tasks/{task_id}/cancel")

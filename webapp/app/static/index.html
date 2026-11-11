@@ -84,6 +84,7 @@
     <div class="card-head">
       <h2>下载队列 <span id="countBadge" class="badge info"></span></h2>
       <div class="queue-actions">
+        <button id="bulkDeleteBtn" class="btn danger small hidden">删除选中<span id="bulkCount"></span></button>
         <button id="cleanupBtn" class="btn ghost small hidden">清理记录</button>
         <button id="refreshBtn" class="btn ghost small">刷新</button>
       </div>
@@ -92,7 +93,10 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>状态</th><th>书名</th><th>来源</th><th>提交者</th><th>进度</th><th>操作</th></tr>
+          <tr>
+            <th class="check-col"><input id="checkAll" type="checkbox" title="全选"></th>
+            <th>状态</th><th>书名</th><th>来源</th><th>提交者</th><th>进度</th><th>操作</th>
+          </tr>
         </thead>
         <tbody id="taskBody"></tbody>
       </table>

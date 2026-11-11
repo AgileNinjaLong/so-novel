@@ -85,6 +85,21 @@ class FakePlugin:
         return None
 
 
+class EvilTitlePlugin(FakePlugin):
+    """模拟上游把书名报错（例如读了上一个任务的日志），用于验证标题不被覆盖。"""
+
+    def __init__(self, pid: str, name: str, wrong_title: str = "活着", seconds: float = 1.0):
+        super().__init__(pid, name, seconds)
+        self.wrong_title = wrong_title
+
+    def download(self, *, task, progress, cancel_event, library_dir):
+        result = super().download(
+            task=task, progress=progress, cancel_event=cancel_event, library_dir=library_dir
+        )
+        result.title = self.wrong_title
+        return result
+
+
 def wait_until(predicate, timeout: float = 20.0, interval: float = 0.1) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -261,6 +276,102 @@ def main() -> int:
     scheduler._sweep_once()
     check(store.get_task(ttl_id)["status"] == "expired", "超时后标记为已过期")
     check(scheduler.deliverable_path(ttl_id) is None, "超时后临时文件已删除")
+
+    print("[11] 上游报的书名不能覆盖用户填写的书名")
+    evil = EvilTitlePlugin("evil", "来源C")
+    scheduler._plugins["evil"] = evil
+    scheduler.request_switch("evil", "cancel_now")
+    t6 = scheduler.enqueue(
+        source="evil", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="战神", book_ref="https://example.com/zhanshen", fmt="txt",
+    )
+    tid6 = t6["task"]["id"]
+    check(wait_until(lambda: store.get_task(tid6)["status"] in {"ready", "failed"}, 30), "任务结束")
+    row6 = store.get_task(tid6)
+    check(row6["title"] == "战神", f"书名仍是用户填写的「战神」（实际：{row6['title']}）")
+    check("活着" not in (row6["title"] or ""), "没有被上游的「活着」串台")
+
+    print("[12] 单条删除 / 批量删除 / 越权")
+    t7 = scheduler.enqueue(
+        source="evil", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="书A", book_ref="a", fmt="txt",
+    )
+    tid7 = t7["task"]["id"]
+    check(wait_until(lambda: store.get_task(tid7)["status"] == "ready", 30), "任务A待接收")
+    result = scheduler.remove_task(tid7)
+    check(result["removed"] is True, "单条删除成功")
+    check(store.get_task(tid7) is None, "记录已不存在")
+    check(scheduler.deliverable_path(tid7) is None, "临时文件已删除")
+
+    ids = []
+    for i in range(2):
+        row = scheduler.enqueue(
+            source="evil", user_id=USER_B["id"], user_name=USER_B["username"],
+            title=f"书B{i}", book_ref=f"b{i}", fmt="txt",
+        )
+        ids.append(row["task"]["id"])
+    check(wait_until(lambda: all(store.get_task(i)["status"] == "ready" for i in ids), 40), "两个任务待接收")
+    denied = scheduler.remove_tasks(ids, user_id=USER_A["id"])
+    check(denied["removed"] == 0 and len(denied["skipped"]) == 2, "别人的任务不能删")
+    bulk = scheduler.remove_tasks(ids, user_id=USER_B["id"])
+    check(bulk["removed"] == 2, "批量删除自己的两条记录")
+    check(all(store.get_task(i) is None for i in ids), "批量删除后记录都不存在")
+
+    print("[13] 运行中的任务：删除需先取消")
+    # 先用一个占位任务占住全局工作线程，保证第二个任务确实处于「排队中」
+    blocker = scheduler.enqueue(
+        source="evil", user_id=USER_B["id"], user_name=USER_B["username"],
+        title="占位", book_ref="blk", fmt="txt",
+    )
+    tq = scheduler.enqueue(
+        source="evil", user_id=USER_B["id"], user_name=USER_B["username"],
+        title="排队待删", book_ref="q", fmt="txt",
+    )
+    tidq = tq["task"]["id"]
+    check(wait_until(lambda: store.get_task(tidq)["status"] == "queued", 10), "第二个任务处于排队中")
+    check(wait_until(lambda: store.get_task(blocker["task"]["id"])["status"] == "running", 15), "占位任务在运行")
+    resq = scheduler.remove_task(tidq)
+    check(resq["removed"] is True, "排队中的任务直接删除记录")
+    check(store.get_task(tidq) is None, "排队记录已不存在")
+    blocker_id = blocker["task"]["id"]
+    check(wait_until(lambda: store.get_task(blocker_id)["status"] != "running", 25), "占位任务已停止")
+    scheduler.remove_task(blocker_id)
+    check(store.get_task(blocker_id) is None, "清理占位任务")
+
+    t8 = scheduler.enqueue(
+        source="evil", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="书C", book_ref="c", fmt="txt",
+    )
+    tid8 = t8["task"]["id"]
+    check(wait_until(lambda: store.get_task(tid8)["status"] == "running", 15), "任务C开始运行")
+    first = scheduler.remove_task(tid8)
+    check(first.get("pending") is True, "运行中提示「正在取消」")
+    check(
+        wait_until(lambda: store.get_task(tid8)["status"] != "running", 25),
+        "取消生效",
+    )
+    second = scheduler.remove_task(tid8)
+    check(second["removed"] is True, "取消后再删除即可移除记录")
+    check(store.get_task(tid8) is None, "记录已移除")
+
+    print("[14] 多人下载同一本书：记录与临时目录互相独立")
+    ta = scheduler.enqueue(
+        source="evil", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="同一本书", book_ref="same", fmt="txt",
+    )
+    tb = scheduler.enqueue(
+        source="evil", user_id=USER_B["id"], user_name=USER_B["username"],
+        title="同一本书", book_ref="same", fmt="txt",
+    )
+    check(ta["task"]["id"] != tb["task"]["id"], "两个用户各自生成独立任务")
+    check(wait_until(lambda: store.get_task(ta["task"]["id"])["status"] in {"ready", "failed"}, 40)
+          and wait_until(lambda: store.get_task(tb["task"]["id"])["status"] in {"ready", "failed"}, 40),
+          "两个任务都完成")
+    from app.config import settings as app_settings
+    dir_a = app_settings.temp_root / ta["task"]["id"]
+    dir_b = app_settings.temp_root / tb["task"]["id"]
+    check(dir_a.is_dir() and dir_b.is_dir(), "各自的临时目录独立存在")
+    check(str(dir_a) != str(dir_b), "临时目录不是同一个（不会互相覆盖）")
 
     scheduler.shutdown()
     print()

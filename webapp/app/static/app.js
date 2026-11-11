@@ -189,6 +189,12 @@ function bindEvents() {
   $('#enqueueBtn').addEventListener('click', enqueue);
   $('#refreshBtn').addEventListener('click', refresh);
   $('#cleanupBtn').addEventListener('click', cleanup);
+  $('#bulkDeleteBtn').addEventListener('click', bulkDelete);
+  $('#checkAll').addEventListener('change', () => {
+    const on = $('#checkAll').checked;
+    document.querySelectorAll('.row-check').forEach((cb) => { cb.checked = on; });
+    updateBulkBar();
+  });
   $('#modalCancel').addEventListener('click', closeModal);
   $('#modalAfter').addEventListener('click', () => applySwitch('after_current'));
   $('#modalNow').addEventListener('click', () => applySwitch('cancel_now'));
@@ -430,7 +436,19 @@ function renderTasks(snap) {
 
   tasks.forEach((t) => {
     const tr = document.createElement('tr');
+    tr.dataset.id = t.id;
 
+    const checkCell = el('td', 'check-cell');
+    checkCell.dataset.label = '选择';
+    if (t.can_delete) {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'row-check';
+      cb.value = t.id;
+      cb.addEventListener('change', updateBulkBar);
+      checkCell.appendChild(cb);
+    }
+    tr.appendChild(checkCell);
     const status = el('td', 'status-cell');
     status.dataset.label = '状态';
     status.appendChild(statusTag(t));
@@ -439,13 +457,21 @@ function renderTasks(snap) {
     const titleCell = el('td', 'title-cell');
     titleCell.dataset.label = '书名';
     titleCell.appendChild(el('div', 't', t.title));
-    if (t.message) titleCell.appendChild(el('div', 'm', t.message));
+    if (t.message) {
+      const m = el('div', 'm clamp', t.message);
+      m.title = t.message;
+      titleCell.appendChild(m);
+    }
     if (t.status === 'ready') {
       const ttl = (state.meta && state.meta.app.file_ttl_min) || 120;
       titleCell.appendChild(el('div', 'm warn-text',
         `文件已就绪，仅保留 ${ttl} 分钟；未接收将自动删除（可重新下载）`));
     }
-    if (t.error && t.status === 'failed') titleCell.appendChild(el('div', 'm', t.error));
+    if (t.error && t.status === 'failed') {
+      const e = el('div', 'm clamp', t.error);
+      e.title = t.error;
+      titleCell.appendChild(e);
+    }
     tr.appendChild(titleCell);
 
     const src = el('td', 'source-cell', sourceName(t.source));
@@ -491,7 +517,12 @@ function renderTasks(snap) {
       retry.addEventListener('click', () => retryTask(t.id));
       actions.appendChild(retry);
     }
-    if (!t.can_cancel && !t.can_pause && !t.can_receive && !t.can_retry) {
+    if (t.can_delete) {
+      const del = el('button', 'btn small danger', '删除');
+      del.addEventListener('click', () => deleteTask(t));
+      actions.appendChild(del);
+    }
+    if (!t.can_cancel && !t.can_pause && !t.can_receive && !t.can_retry && !t.can_delete) {
       actions.appendChild(el('span', 'muted', '—'));
     }
     tr.appendChild(actions);
@@ -598,6 +629,44 @@ function filenameFromDisposition(header) {
   }
   const plain = header.match(/filename="([^"]*)"/i);
   return plain ? plain[1] : '';
+}
+
+async function deleteTask(t) {
+  const note = t.status === 'ready'
+    ? '该任务的文件还在服务器待接收，删除会一并丢弃。'
+    : '';
+  if (!confirm(`删除「${t.title}」的下载记录？\n${note}`)) return;
+  try {
+    const data = await api(`/api/tasks/${t.id}`, { method: 'DELETE' });
+    if (data && data.pending) showMsg('正在取消，请稍后再点一次删除', 'bad');
+    else showMsg('已删除记录', 'ok');
+    await refresh();
+  } catch (err) { showMsg(err.message, 'bad'); }
+}
+
+function selectedIds() {
+  return Array.from(document.querySelectorAll('.row-check:checked')).map((cb) => cb.value);
+}
+
+function updateBulkBar() {
+  const ids = selectedIds();
+  const btn = $('#bulkDeleteBtn');
+  btn.classList.toggle('hidden', ids.length === 0);
+  $('#bulkCount').textContent = ids.length ? `（${ids.length}）` : '';
+  const all = document.querySelectorAll('.row-check');
+  const allChecked = all.length > 0 && ids.length === all.length;
+  $('#checkAll').checked = allChecked;
+}
+
+async function bulkDelete() {
+  const ids = selectedIds();
+  if (!ids.length) return;
+  if (!confirm(`删除选中的 ${ids.length} 条下载记录？待接收的文件会被丢弃。`)) return;
+  try {
+    const data = await api('/api/tasks/bulk-delete', { method: 'POST', body: { ids } });
+    showMsg(`已删除 ${data.removed} 条记录${data.skipped.length ? `，${data.skipped.length} 条正在取消` : ''}`, 'ok');
+    await refresh();
+  } catch (err) { showMsg(err.message, 'bad'); }
 }
 
 async function pauseTask(id) {

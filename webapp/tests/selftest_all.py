@@ -38,14 +38,17 @@ UNIT_SUITES = [
     ("有效期：叠加/封顶/永久", "test_validity.py"),
     ("抗暴力破解：计数/锁定/持久化", "test_throttle.py"),
     ("密钥：一钥一账号/绑定/单次", "test_keys.py"),
-    ("调度器：单线程/切换/交付/TTL", "test_scheduler.py"),
+    ("日志隔离：任务日志不串台", "test_log_filter.py"),
+    ("调度器：单线程/切换/交付/TTL/删除", "test_scheduler.py"),
 ]
 BLACKBOX_SUITES = [
     ("认证与后台：真实 HTTP 黑盒", "test_auth_blackbox.py"),
 ]
 LIVE_SUITES = [
     ("真实环境：注册/搜索/下载/暂停", "e2e_live.py"),
+    ("真实上游：连续两本不串台", "test_title_stability.py"),
     ("浏览器接收：落盘 + ack 删除", "test_receive_browser.py"),
+    ("界面删除：勾选批量/单条/后台分组", "test_delete_ui.py"),
 ]
 
 

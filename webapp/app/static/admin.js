@@ -289,66 +289,134 @@ function statusLabel(t) {
   return map[t.status] || t.status;
 }
 
+const selectedTaskIds = new Set();
+
 function renderTasks() {
   const tbody = $('#taskBody');
   tbody.innerHTML = '';
+  selectedTaskIds.clear();
   const tasks = overview.tasks || [];
   $('#emptyTasks').classList.toggle('hidden', tasks.length > 0);
+  $('#bulkTaskBtn').classList.add('hidden');
+  if (!tasks.length) return;
+
+  // 按提交者分组：多人可能下载同一本书，必须按用户区分，避免混淆与误删
+  const groups = new Map();
   tasks.forEach((t) => {
-    const tr = document.createElement('tr');
+    const key = t.user || '（未知用户）';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  });
 
-    const status = el('td', 'status-cell');
-    status.dataset.label = '状态';
-    status.appendChild(el('span', 'tag ' + t.status, statusLabel(t)));
-    tr.appendChild(status);
+  groups.forEach((rows, user) => {
+    const head = document.createElement('tr');
+    head.className = 'group-row';
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    const name = el('strong', '', `提交者：${user}`);
+    cell.appendChild(name);
+    cell.appendChild(el('span', 'badge info', `${rows.length} 条`));
+    const books = new Set(rows.map((r) => r.title)).size;
+    cell.appendChild(el('span', 'badge', `${books} 本书`));
+    const delAll = el('button', 'btn small danger', '删除该用户记录');
+    delAll.addEventListener('click', () => adminDeleteTasks(rows.map((r) => r.id), user));
+    cell.appendChild(delAll);
+    head.appendChild(cell);
+    tbody.appendChild(head);
 
-    const title = el('td', 'title-cell');
-    title.dataset.label = '书名';
-    title.appendChild(el('div', 't', t.title));
-    if (t.message) title.appendChild(el('div', 'm', t.message));
-    tr.appendChild(title);
+    rows.forEach((t) => {
+      const tr = document.createElement('tr');
+      tr.dataset.id = t.id;
 
-    const src = el('td', 'source-cell', t.source);
-    src.dataset.label = '来源';
-    tr.appendChild(src);
+      const checkCell = el('td', 'check-cell');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'row-check';
+      cb.value = t.id;
+      cb.disabled = !t.can_delete;
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectedTaskIds.add(t.id);
+        else selectedTaskIds.delete(t.id);
+        $('#bulkTaskBtn').classList.toggle('hidden', selectedTaskIds.size === 0);
+        $('#bulkTaskCount').textContent = selectedTaskIds.size ? `（${selectedTaskIds.size}）` : '';
+      });
+      checkCell.appendChild(cb);
+      tr.appendChild(checkCell);
 
-    const who = el('td', 'user-cell', t.user || '匿名');
-    who.dataset.label = '提交者';
-    tr.appendChild(who);
+      const status = el('td', 'status-cell');
+      status.dataset.label = '状态';
+      status.appendChild(el('span', 'tag ' + t.status, statusLabel(t)));
+      tr.appendChild(status);
 
-    const prog = el('td', 'progress-cell');
-    prog.dataset.label = '进度';
-    const bar = el('div', 'bar');
-    const fill = el('span');
-    fill.style.width = `${Math.max(0, Math.min(100, t.progress || 0))}%`;
-    bar.appendChild(fill);
-    prog.appendChild(bar);
-    let label = `${Math.round(t.progress || 0)}%`;
-    if (t.chapters_total) label += ` · ${t.chapters_done}/${t.chapters_total}`;
-    if (t.size_bytes) label += ` · ${(t.size_bytes / 1048576).toFixed(1)} MB`;
-    prog.appendChild(el('div', 'p', label));
-    tr.appendChild(prog);
+      const title = el('td', 'title-cell');
+      title.dataset.label = '书名';
+      title.appendChild(el('div', 't', t.title));
+      if (t.message) {
+        const m = el('div', 'm clamp', t.message);
+        m.title = t.message;
+        title.appendChild(m);
+      }
+      tr.appendChild(title);
 
-    const ops = el('td', 'action-cell');
-    ops.dataset.label = '操作';
-    if (t.can_cancel) {
-      const btn = el('button', 'btn small danger', '取消');
-      btn.addEventListener('click', () => cancelTask(t.id));
-      ops.appendChild(btn);
-    }
-    if (t.can_receive) {
-      const btn = el('button', 'btn small primary', '接收');
-      btn.addEventListener('click', () => receiveTask(t, btn));
-      ops.appendChild(btn);
-    }
-    if (!t.can_cancel && !t.can_receive) {
-      ops.appendChild(el('span', 'muted', '—'));
-    }
-    tr.appendChild(ops);
-    tbody.appendChild(tr);
+      const src = el('td', 'source-cell', t.source);
+      src.dataset.label = '来源';
+      tr.appendChild(src);
+
+      const prog = el('td', 'progress-cell');
+      prog.dataset.label = '进度';
+      const bar = el('div', 'bar');
+      const fill = el('span');
+      fill.style.width = `${Math.max(0, Math.min(100, t.progress || 0))}%`;
+      bar.appendChild(fill);
+      prog.appendChild(bar);
+      let label = `${Math.round(t.progress || 0)}%`;
+      if (t.chapters_total) label += ` · ${t.chapters_done}/${t.chapters_total}`;
+      if (t.size_bytes) label += ` · ${(t.size_bytes / 1048576).toFixed(2)} MB`;
+      prog.appendChild(el('div', 'p', label));
+      tr.appendChild(prog);
+
+      const ops = el('td', 'action-cell');
+      ops.dataset.label = '操作';
+      if (t.can_cancel) {
+        const btn = el('button', 'btn small danger', '取消');
+        btn.addEventListener('click', () => cancelTask(t.id));
+        ops.appendChild(btn);
+      }
+      if (t.can_receive) {
+        const btn = el('button', 'btn small primary', '接收');
+        btn.addEventListener('click', () => receiveTask(t, btn));
+        ops.appendChild(btn);
+      }
+      if (t.can_delete) {
+        const del = el('button', 'btn small ghost', '删除');
+        del.addEventListener('click', () => adminDeleteTasks([t.id], t.user));
+        ops.appendChild(del);
+      }
+      if (!t.can_cancel && !t.can_receive && !t.can_delete) {
+        ops.appendChild(el('span', 'muted', '—'));
+      }
+      tr.appendChild(ops);
+      tbody.appendChild(tr);
+    });
   });
 }
 
+async function adminDeleteTasks(ids, userLabel) {
+  const count = ids.length;
+  const who = userLabel ? `（用户 ${userLabel}）` : '';
+  if (!confirm(`删除 ${count} 条下载记录${who}？\n待接收的文件会被一并丢弃，已接收的记录只删除记录本身。`)) return;
+  try {
+    const data = await api('/api/admin/tasks/bulk-delete', { method: 'POST', body: { ids } });
+    showTaskMsg(`已删除 ${data.removed} 条记录${data.skipped.length ? `，${data.skipped.length} 条正在取消` : ''}`, 'ok');
+    await load();
+  } catch (err) {
+    showTaskMsg(err.message, 'bad');
+  }
+}
+
+async function bulkDeleteTasks() {
+  await adminDeleteTasks(Array.from(selectedTaskIds), '');
+}
 async function receiveTask(t, btn) {
   const ttl = (overview && overview.file_ttl_min) || 120;
   if (!confirm(`接收《${t.title}》？完整下载后服务器会删除临时文件；若失败则保留 ${ttl} 分钟可重试。`)) return;
@@ -405,6 +473,7 @@ function showTaskMsg(text, kind) {
 /* ---------------- 绑定 ---------------- */
 
 $('#genKeyBtn').addEventListener('click', genKeys);
+$('#bulkTaskBtn').addEventListener('click', bulkDeleteTasks);
 $('#keyDays').addEventListener('change', () => {
   const custom = $('#keyDays').value === 'custom';
   $('#keyCustomDays').classList.toggle('hidden', !custom);

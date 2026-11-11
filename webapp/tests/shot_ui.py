@@ -49,8 +49,18 @@ def prepare() -> dict:
     )
     try:
         user.post("/api/source", json={"source": "sonovel", "mode": "cancel_now"})
+        # 用搜索得到的 3 本不同的书，截图里队列更像真实场景
+        found = user.get("/api/search", params={"q": "活着"}).json()["items"]
+        picks = [(i["title"], i["book_ref"]) for i in found[:3]] or [("活着", BOOK_SMALL)]
         task = user.post("/api/tasks", json={
-            "source": "sonovel", "title": "活着", "book_ref": BOOK_SMALL, "fmt": "txt"}).json()["task"]["id"]
+            "source": "sonovel", "title": picks[0][0], "book_ref": picks[0][1], "fmt": "txt"}).json()["task"]["id"]
+        for title, ref in picks[1:]:
+            user.post("/api/tasks", json={
+                "source": "sonovel", "title": title, "book_ref": ref, "fmt": "txt"})
+        # 管理员也提交一条，后台可展示「按用户分组」
+        admin.post("/api/source", json={"source": "sonovel", "mode": "cancel_now"})
+        admin.post("/api/tasks", json={
+            "source": "sonovel", "title": picks[-1][0], "book_ref": picks[-1][1], "fmt": "txt"})
     except Exception:
         task = ""
     return {

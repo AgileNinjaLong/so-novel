@@ -83,11 +83,18 @@
   <section class="card">
     <div class="queue-head">
       <h2>全部任务 <span id="taskBadge" class="badge info"></span></h2>
+      <div class="queue-actions">
+        <button id="bulkTaskBtn" class="btn danger small hidden">删除选中<span id="bulkTaskCount"></span></button>
+      </div>
     </div>
+    <p class="field-hint">按提交者分组：多人下载同一本书也各自独立记录，互不覆盖；删除记录只影响该用户自己的条目。</p>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>状态</th><th>书名</th><th>来源</th><th>提交者</th><th>进度</th><th>操作</th></tr>
+          <tr>
+            <th class="check-col"></th>
+            <th>状态</th><th>书名</th><th>来源</th><th>进度</th><th>操作</th>
+          </tr>
         </thead>
         <tbody id="taskBody"></tbody>
       </table>

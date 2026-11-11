@@ -126,6 +126,7 @@ class Scheduler:
                 "mine": mine,
                 "can_cancel": can_manage
                 and task["status"] in {store.STATUS_QUEUED, store.STATUS_RUNNING},
+                "can_delete": can_manage and task["status"] != store.STATUS_RUNNING,
                 "can_pause": can_manage
                 and task["status"] in {store.STATUS_QUEUED, store.STATUS_RUNNING},
                 "can_receive": can_manage and task["status"] == store.STATUS_READY,
@@ -256,7 +257,15 @@ class Scheduler:
                 task_id, store.STATUS_CANCELED, message="已取消", error=reason or "已取消"
             )
 
-    # ---------------- 取消 / 删除 --------------
+    # ---------------- 取消 / 删除 / 暂停 --------------
+    PLACEHOLDER_TITLES = {"", "未命名", "book", "untitled"}
+
+    def _title_is_placeholder(self, task_id: str) -> bool:
+        row = store.get_task(task_id)
+        if row is None:
+            return False
+        title = (row.get("title") or "").strip()
+        return title == "" or title in self.PLACEHOLDER_TITLES or title.startswith("book ")
     def cancel(self, task_id: str) -> dict[str, Any]:
         with self._cv:
             task = store.get_task(task_id)
@@ -298,6 +307,85 @@ class Scheduler:
                 store.update_task(task_id, message="正在取消…")
                 return {"canceled": True, "was_running": True}
         return {"canceled": False, "was_running": False, "reason": "任务已结束"}
+
+    # ---------------- 删除（单条/批量） --------------
+    def remove_task(self, task_id: str) -> dict[str, Any]:
+        """删除一条任务记录（含文件）。
+
+        排队中：直接删除记录；运行中：先取消（工作线程收尾后再删一次）；
+        待接收/已结束：丢弃临时文件并删除记录。
+        """
+        task = store.get_task(task_id)
+        if task is None:
+            raise KeyError(task_id)
+        if task["status"] == store.STATUS_RUNNING:
+            self.cancel(task_id)
+            return {
+                "removed": False,
+                "pending": True,
+                "reason": "正在取消，稍后会自动结束，可再点一次删除",
+            }
+        self._drop_temp(task_id)
+        self._paused.discard(task_id)
+        removed = store.delete_task_record(task_id)
+        if removed is None:
+            # 可能在删除瞬间被工作线程领走（queued → running），改为取消并返回 pending
+            row = store.get_task(task_id)
+            if row is None:
+                raise KeyError(task_id)
+            if row["status"] == store.STATUS_RUNNING:
+                self.cancel(task_id)
+                return {
+                    "removed": False,
+                    "pending": True,
+                    "reason": "正在取消，稍后会自动结束，可再点一次删除",
+                }
+            raise KeyError(task_id)
+        with self._cv:
+            self._cv.notify_all()
+        return {"removed": True, "pending": False, "id": task_id}
+
+    def remove_tasks(
+        self, task_ids: list[str], *, user_id: str | None = None
+    ) -> dict[str, Any]:
+        """批量删除。`user_id` 非空时只允许删该用户的记录（普通用户场景）。"""
+        ids = [str(i) for i in task_ids if i]
+        if not ids:
+            return {"removed": 0, "ids": [], "skipped": []}
+
+        removed_rows: list[dict[str, Any]] = []
+        skipped: list[str] = []
+        for task_id in ids:
+            task = store.get_task(task_id)
+            if task is None:
+                skipped.append(task_id)
+                continue
+            if user_id is not None and task["user_id"] != user_id:
+                skipped.append(task_id)
+                continue
+            if task["status"] == store.STATUS_RUNNING:
+                # 运行中的任务需要先取消，由工作线程收尾；本次不计入已删除
+                self.cancel(task_id)
+                skipped.append(task_id)
+                continue
+            self._drop_temp(task_id)
+            self._paused.discard(task_id)
+            row = store.delete_task_record(task_id)
+            if row is not None:
+                removed_rows.append(row)
+            else:
+                current = store.get_task(task_id)
+                if current is not None and current["status"] == store.STATUS_RUNNING:
+                    self.cancel(task_id)
+                skipped.append(task_id)
+
+        with self._cv:
+            self._cv.notify_all()
+        return {
+            "removed": len(removed_rows),
+            "ids": [row["id"] for row in removed_rows],
+            "skipped": skipped,
+        }
 
     # ---------------- 清理 --------------
     def cleanup_finished(
@@ -492,7 +580,8 @@ class Scheduler:
                 changed = True
             if message:
                 changed = True
-            if title:
+            if title and self._title_is_placeholder(task["id"]):
+                # 只在用户没填书名时采用上游识别到的书名；已有书名绝不覆盖
                 changed = True
                 try:
                     store.update_task(task["id"], title=title)
@@ -558,7 +647,7 @@ class Scheduler:
             size_bytes=size,
             file_path=str(path),
         )
-        if result.title:
+        if result.title and self._title_is_placeholder(task["id"]):
             try:
                 store.update_task(task["id"], title=result.title)
             except Exception:

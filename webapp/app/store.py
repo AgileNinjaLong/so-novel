@@ -625,6 +625,48 @@ def purge_all_non_admin() -> dict[str, int]:
     return {"users": len(ids), "keys": int(keys or 0), "tasks": int(tasks or 0)}
 
 
+def delete_task_record(task_id: str) -> dict[str, Any] | None:
+    """删除单条任务记录（调用方负责权限与临时文件）；运行中的任务不允许直接删。"""
+    with _lock:
+        conn = _connection()
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        if row["status"] == STATUS_RUNNING:
+            return None
+        conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+    return dict(row)
+
+
+def delete_task_records(task_ids: Iterable[str], *, user_id: str | None = None) -> list[dict[str, Any]]:
+    """批量删除记录；`user_id` 不为空时只删该用户名下的（用于普通用户）。"""
+    ids = [str(i) for i in task_ids if i]
+    if not ids:
+        return []
+    placeholders = ", ".join("?" for _ in ids)
+    with _lock:
+        conn = _connection()
+        if user_id is None:
+            rows = conn.execute(
+                f"SELECT * FROM tasks WHERE id IN ({placeholders})", ids
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT * FROM tasks WHERE user_id = ? AND id IN ({placeholders})",
+                [user_id, *ids],
+            ).fetchall()
+        removable = [row for row in rows if row["status"] != STATUS_RUNNING]
+        if removable:
+            keep_ids = [row["id"] for row in removable]
+            conn.execute(
+                f"DELETE FROM tasks WHERE id IN ({', '.join('?' for _ in keep_ids)})",
+                keep_ids,
+            )
+            conn.commit()
+    return [dict(row) for row in removable]
+
+
 def task_counts() -> dict[str, int]:
     with _lock:
         rows = _connection().execute(
