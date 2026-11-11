@@ -766,6 +766,18 @@ def mark_invite_key_used(key_id: str, user_id: str, username: str) -> None:
         conn.commit()
 
 
+def bind_invite_key(key_id: str, *, user_id: str, username: str, password_plain: str) -> None:
+    """注册成功后把密钥与用户账号绑定：后台据此展示账号与密码。"""
+    with _lock:
+        conn = _connection()
+        conn.execute(
+            "UPDATE invite_keys SET status = 'used', username = ?, password_plain = ?, "
+            "used_at = ?, used_by = ?, used_by_name = ? WHERE id = ?",
+            (username, password_plain, _now(), user_id, username, key_id),
+        )
+        conn.commit()
+
+
 def revoke_invite_key(key_id: str) -> bool:
     with _lock:
         conn = _connection()

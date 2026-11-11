@@ -43,7 +43,7 @@
       <h2>生成注册密钥</h2>
       <span class="badge info" id="keyStatBadge"></span>
     </div>
-    <p class="hint">每把密钥对应且只对应一个账号，只能用一次。用户名/密码留空则系统自动生成；填了用户名就只生成 1 把。</p>
+    <p class="hint">每把密钥只能被一个用户使用；账号密码由用户注册时自己设置，注册成功后这里会显示绑定的账号与密码。</p>
     <div class="row">
       <label class="muted">有效期</label>
       <select id="keyDays" style="max-width:150px">
@@ -54,13 +54,9 @@
         <option value="999999">永久</option>
       </select>
       <label class="muted">数量</label>
-      <input id="keyCount" type="text" value="1" style="max-width:90px" title="用户名留空时可一次生成多把">
+      <input id="keyCount" type="text" value="1" style="max-width:90px">
       <label class="muted">备注</label>
       <input id="keyNote" type="text" placeholder="给谁用（可选）" style="flex:1 1 160px">
-    </div>
-    <div class="row">
-      <input id="keyUsername" type="text" placeholder="用户名（留空自动生成）">
-      <input id="keyPassword" type="password" placeholder="密码（留空自动生成，≥8 位）">
     </div>
     <div class="row">
       <button id="genKeyBtn" class="btn primary">生成密钥</button>

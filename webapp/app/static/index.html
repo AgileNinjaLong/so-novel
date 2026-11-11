@@ -11,22 +11,22 @@
   <div class="brand">
     <span class="logo">书</span>
     <div>
-      <h1>小说下载 WebUI</h1>
-      <p class="sub">多来源插件 · 全局单线程队列</p>
+      <h1>小说下载</h1>
+      <p class="sub">多来源 · 排队下载 · 不下发服务器文件</p>
     </div>
   </div>
   <div class="topbar-right">
     <span id="userChip" class="user-chip"><span class="dot"></span><span id="userName">…</span></span>
-    <button id="adminBtn" class="icon-btn hidden">后台管理</button>
+    <button id="adminBtn" class="icon-btn hidden">后台</button>
     <button id="logoutBtn" class="icon-btn">退出</button>
   </div>
 </header>
 
 <section class="source-bar card">
   <div class="source-left">
-    <label for="sourceSelect">下载来源</label>
+    <label for="sourceSelect">来源</label>
     <select id="sourceSelect"></select>
-    <button id="switchBtn" class="btn primary">切换来源</button>
+    <button id="switchBtn" class="btn">切换</button>
   </div>
   <div id="sourceStatus" class="source-status"></div>
 </section>
@@ -35,43 +35,60 @@
 <div id="switchBanner" class="banner hidden"></div>
 
 <main class="layout">
-  <section class="card input-card">
-    <h2 id="inputTitle">提交下载</h2>
-    <p id="inputHint" class="hint"></p>
-    <div id="searchMode" class="mode hidden">
-      <div class="row">
-        <input id="searchBox" type="text" placeholder="输入书名搜索…" autocomplete="off">
-        <button id="searchBtn" class="btn">搜索</button>
-      </div>
-      <ul id="searchResults" class="results"></ul>
-    </div>
-    <div id="urlMode" class="mode hidden">
-      <div class="row">
-        <input id="urlBox" type="text" placeholder="粘贴书籍详情页链接" autocomplete="off">
+  <section class="card search-card">
+    <div class="card-head">
+      <h2>找书</h2>
+      <div id="modeTabs" class="tabs hidden">
+        <button class="tab active" data-mode="search">书名搜索</button>
+        <button class="tab" data-mode="link">粘贴链接</button>
       </div>
     </div>
-    <div class="row">
-      <label for="fmtSelect" class="muted">导出格式</label>
-      <select id="fmtSelect" style="max-width:140px"></select>
+
+    <div id="searchPane">
+      <div class="searchbar">
+        <span class="searchbar-icon" aria-hidden="true">⌕</span>
+        <input id="searchBox" type="text" autocomplete="off" spellcheck="false"
+               placeholder="输入书名，回车搜索">
+        <button id="clearSearch" class="clear-btn hidden" title="清空">×</button>
+        <button id="searchBtn" class="btn primary">搜索</button>
+      </div>
+      <p id="searchHint" class="field-hint">支持书名搜索；也可以直接把详情页链接粘进来。</p>
+      <div id="searchMeta" class="search-meta"></div>
+      <div id="searchResults" class="result-list"></div>
     </div>
-    <div class="row">
-      <input id="titleBox" type="text" placeholder="书名（可留空，由来源识别）" autocomplete="off">
+
+    <div id="linkPane" class="hidden">
+      <div class="field">
+        <label for="urlBox">书籍详情页链接</label>
+        <input id="urlBox" type="text" placeholder="https://example.com/book/12345/">
+      </div>
+      <p class="field-hint" id="linkHint"></p>
     </div>
-    <div class="row">
-      <button id="enqueueBtn" class="btn primary" style="flex:1">加入下载队列</button>
+
+    <div class="picker-bar">
+      <div class="pick-info">
+        <span class="pick-label">已选择</span>
+        <span id="pickTitle" class="pick-title">尚未选择书籍</span>
+      </div>
+      <div class="pick-ops">
+        <label for="fmtSelect" class="muted">格式</label>
+        <select id="fmtSelect" class="fmt-select"></select>
+        <input id="titleBox" type="text" placeholder="书名（可留空）" class="title-input">
+        <button id="enqueueBtn" class="btn primary">加入下载队列</button>
+      </div>
     </div>
     <p id="enqueueMsg" class="msg"></p>
   </section>
 
   <section class="card queue-card">
-    <div class="queue-head">
+    <div class="card-head">
       <h2>下载队列 <span id="countBadge" class="badge info"></span></h2>
       <div class="queue-actions">
-        <button id="cleanupBtn" class="btn ghost small hidden">清理失败/取消</button>
+        <button id="cleanupBtn" class="btn ghost small hidden">清理记录</button>
         <button id="refreshBtn" class="btn ghost small">刷新</button>
       </div>
     </div>
-    <p class="hint">同一时间只下载一本；多人同时提交按顺序排队，先到先得。下载完成后服务器只临时保存，请及时点「接收文件」，传输完成即从服务器删除。</p>
+    <p class="field-hint">同一时间只下载一本；多人提交按顺序排队。下载完成后请及时「接收文件」，服务器只在传输期间临时保存。</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -79,7 +96,7 @@
         </thead>
         <tbody id="taskBody"></tbody>
       </table>
-      <p id="emptyQueue" class="empty">队列为空，先在上方提交一本吧。</p>
+      <p id="emptyQueue" class="empty">队列为空，先在上面找一本。</p>
     </div>
   </section>
 </main>

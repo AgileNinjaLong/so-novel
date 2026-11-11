@@ -116,12 +116,8 @@ async def api_register(request: Request, payload: dict[str, Any] = Body(...)):
     if not key:
         raise HTTPException(status_code=400, detail="请填写注册密钥")
     ip = auth.client_ip(request)
-    info = await run_in_threadpool(auth.key_public_info, key, ip=ip)
-    if not info.get("valid"):
-        raise HTTPException(status_code=403, detail=info.get("reason") or "密钥不可用")
-    user = await run_in_threadpool(
-        auth.redeem_key, key, username, password, ip=ip
-    )
+    # 只在真正兑换时校验（redeem_key 内部会给出具体原因），避免被「密钥查询」的限流误伤
+    user = await run_in_threadpool(auth.redeem_key, key, username, password, ip=ip)
     token, ttl = auth.issue_session(user, request)
     return _set_session(
         JSONResponse({"user": auth.user_public(user)}, status_code=201), token, ttl
@@ -448,17 +444,14 @@ async def api_admin_create_keys(request: Request, payload: dict[str, Any] = Body
         count = int(payload.get("count") or 1)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="count 必须是整数")
-    mode = str(payload.get("mode") or "bound")
     created = await run_in_threadpool(
         auth.generate_invite_keys,
         days=days,
         count=count,
-        username=str(payload.get("username") or ""),
-        password=str(payload.get("password") or ""),
         note=str(payload.get("note") or ""),
         created_by=admin["username"],
     )
-    return {"keys": [_key_view(k) for k in created], "mode": mode}
+    return {"keys": [_key_view(k) for k in created]}
 
 
 @app.delete("/api/admin/keys/{key_id}")
@@ -548,6 +541,7 @@ async def api_admin_cancel_task(request: Request, task_id: str):
 
 
 def _key_view(row: dict[str, Any]) -> dict[str, Any]:
+    bound = bool(row.get("username"))
     return {
         "id": row["id"],
         "key": row["key"],
@@ -555,6 +549,7 @@ def _key_view(row: dict[str, Any]) -> dict[str, Any]:
         "days": row["days"],
         "permanent": bool(row["permanent"]),
         "days_text": "永久" if row["permanent"] else f"{row['days']} 天",
+        "bound": bound,
         "username": row.get("username") or "",
         "password": row.get("password_plain") or "",
         "status": row["status"],

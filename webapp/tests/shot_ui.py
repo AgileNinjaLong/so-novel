@@ -34,19 +34,19 @@ def session_cookies(client: httpx.Client) -> list[dict]:
 
 
 def prepare() -> dict:
-    """准备：一把自动账号密钥、一把指定账号密钥、一个带有效期的用户、一个待接收任务。"""
     admin = httpx.Client(base_url=BASE, timeout=30)
     admin.post("/api/auth/login", json={"username": ADMIN_USER, "password": ADMIN_PASS})
-    key = admin.post("/api/admin/keys", json={"days": 372, "count": 1}).json()["keys"][0]
+
+    # 一把留给注册页演示（不绑定），一把用来创建真实用户
     demo_key = admin.post("/api/admin/keys", json={"days": 372, "count": 1}).json()["keys"][0]
-    named = admin.post(
-        "/api/admin/keys",
-        json={"days": 31, "username": f"demo{uuid.uuid4().hex[:4]}",
-              "password": "demo-pass-1", "note": "演示账号"},
-    ).json()["keys"][0]
+    real_key = admin.post("/api/admin/keys", json={"days": 372, "count": 1}).json()["keys"][0]
 
     user = httpx.Client(base_url=BASE, timeout=180)
-    user.post("/api/auth/register", json={"key": key["key"]})
+    username = f"reader{uuid.uuid4().hex[:4]}"
+    user.post(
+        "/api/auth/register",
+        json={"key": real_key["key"], "username": username, "password": "reader-pass-1"},
+    )
     try:
         user.post("/api/source", json={"source": "sonovel", "mode": "cancel_now"})
         task = user.post("/api/tasks", json={
@@ -58,10 +58,9 @@ def prepare() -> dict:
         "admin_cookies": session_cookies(admin),
         "user": user,
         "user_cookies": session_cookies(user),
-        "open_key": demo_key["key"],
-        "bound_key": named["key"],
+        "demo_key": demo_key["key"],
         "task": task,
-        "username": key["username"],
+        "username": username,
     }
 
 
@@ -71,7 +70,6 @@ def main() -> int:
     data = prepare()
     print("prepared user:", data["username"], "task:", data["task"])
 
-    # 等任务进入待接收（最多 3 分钟）
     deadline = time.time() + 180
     while time.time() < deadline and data["task"]:
         snap = data["user"].get("/api/state").json()
@@ -84,47 +82,60 @@ def main() -> int:
     with sync_playwright() as pw:
         browser = pw.chromium.launch(executable_path=CHROME, headless=True)
 
-        # 1) 注册页：查询密钥
-        page = browser.new_page(viewport={"width": 1280, "height": 860})
+        # 1) 注册页：查询密钥后显示有效期 + 自设账号密码
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
         page.goto(f"{BASE}/register", wait_until="networkidle")
-        page.fill("#key", data["open_key"])
+        page.fill("#key", data["demo_key"])
         page.click("#checkBtn")
-        page.wait_for_timeout(1200)
+        page.wait_for_timeout(1000)
         page.screenshot(path=str(out / "register.png"))
         print("saved register.png")
 
-        # 2) 注册页：绑定型密钥（显示预置账号密码）
-        page.goto(f"{BASE}/register", wait_until="networkidle")
-        page.fill("#key", data["bound_key"])
-        page.click("#checkBtn")
-        page.wait_for_timeout(1200)
-        page.screenshot(path=str(out / "register-bound.png"))
-        print("saved register-bound.png")
-
-        # 3) 登录页
+        # 2) 登录页
         page.goto(f"{BASE}/login", wait_until="networkidle")
         page.screenshot(path=str(out / "login.png"))
         print("saved login.png")
 
-        # 4) 用户主界面（含待接收任务）
-        ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        # 3) 用户主界面 + 搜索结果
+        ctx = browser.new_context(viewport={"width": 1280, "height": 950})
         ctx.add_cookies(data["user_cookies"])
         p_user = ctx.new_page()
         p_user.goto(f"{BASE}/", wait_until="networkidle")
-        p_user.wait_for_timeout(2500)
+        p_user.wait_for_timeout(2000)
         p_user.screenshot(path=str(out / "app.png"), full_page=True)
         print("saved app.png")
 
-        # 5) 后台（含密钥列表）
+        p_user.fill("#searchBox", "活着")
+        p_user.click("#searchBtn")
+        p_user.wait_for_timeout(1200)
+        for _ in range(40):
+            if p_user.locator(".result-item").count() > 0:
+                break
+            if p_user.locator("#searchMeta").inner_text().startswith("搜索失败"):
+                break
+            p_user.wait_for_timeout(1000)
+        print("results:", p_user.locator(".result-item").count(), "|", p_user.inner_text("#searchMeta")[:60])
+        p_user.screenshot(path=str(out / "search.png"), full_page=True)
+        print("saved search.png")
+
+        # 选中第一条，展示选择态
+        first = p_user.locator(".result-item").first
+        if first.count() > 0:
+            first.locator(".pick-btn").click()
+            p_user.wait_for_timeout(600)
+            p_user.screenshot(path=str(out / "search-selected.png"), full_page=True)
+            print("saved search-selected.png")
+
+        # 4) 后台
         ctx_admin = browser.new_context(viewport={"width": 1280, "height": 1000})
         ctx_admin.add_cookies(data["admin_cookies"])
         p_admin = ctx_admin.new_page()
         p_admin.goto(f"{BASE}/admin", wait_until="networkidle")
-        p_admin.wait_for_timeout(1800)
+        p_admin.wait_for_timeout(1500)
         p_admin.screenshot(path=str(out / "admin.png"), full_page=True)
         print("saved admin.png")
 
-        # 6) 移动端
+        # 5) 移动端
         ctx_m = browser.new_context(
             viewport={"width": 390, "height": 844},
             device_scale_factor=2,
@@ -138,7 +149,14 @@ def main() -> int:
         ctx_m.add_cookies(data["user_cookies"])
         p_m = ctx_m.new_page()
         p_m.goto(f"{BASE}/", wait_until="networkidle")
-        p_m.wait_for_timeout(2000)
+        p_m.wait_for_timeout(1200)
+        p_m.fill("#searchBox", "活着")
+        p_m.click("#searchBtn")
+        for _ in range(40):
+            if p_m.locator(".result-item").count() > 0:
+                break
+            p_m.wait_for_timeout(1000)
+        p_m.wait_for_timeout(800)
         p_m.screenshot(path=str(out / "app-mobile.png"), full_page=True)
         print("saved app-mobile.png")
 

@@ -73,7 +73,7 @@ function renderKeys() {
   keys.forEach((k) => {
     const card = el('div', 'user-card');
     const head = el('div', 'head');
-    head.appendChild(el('span', 'name', `密钥 · ${k.username || '（无账号）'}`));
+    head.appendChild(el('span', 'name', k.bound ? `密钥 · ${k.username}` : '密钥 · 未绑定'));
     const tags = el('div', 'tag-row');
     tags.appendChild(el('span', 'badge ' + (k.status === 'unused' ? 'ok' : k.status === 'used' ? 'info' : 'warn'), keyStatusText(k.status)));
     tags.appendChild(el('span', 'badge', k.days_text));
@@ -84,13 +84,16 @@ function renderKeys() {
     code.style.marginTop = '8px';
     card.appendChild(code);
 
-    const creds = el('div', 'meta', `账号：${k.username || '—'}　密码：${k.password || '—'}`);
-    creds.style.color = 'var(--text)';
+    const creds = el('div', 'meta',
+      k.bound
+        ? `账号：${k.username}　密码：${k.password}`
+        : '账号：待用户注册后绑定（注册时由用户自己设置账号密码）');
+    creds.style.color = k.bound ? 'var(--text)' : 'var(--muted)';
     card.appendChild(creds);
 
     const meta = el('div', 'meta',
       `生成：${(k.created_at || '').slice(0, 16).replace('T', ' ')}` +
-      (k.used_at ? `　使用：${String(k.used_at).slice(0, 16).replace('T', ' ')}` : '') +
+      (k.used_at ? `　注册：${String(k.used_at).slice(0, 16).replace('T', ' ')}` : '') +
       (k.used_by_name ? `　使用者：${k.used_by_name}` : '') +
       (k.note ? `　备注：${k.note}` : ''));
     card.appendChild(meta);
@@ -99,10 +102,12 @@ function renderKeys() {
     const copy = el('button', 'btn small', '复制密钥');
     copy.addEventListener('click', () => copyText(k.key, copy));
     ops.appendChild(copy);
-    const copyAll = el('button', 'btn small', '复制账号+密码+密钥');
-    copyAll.addEventListener('click', () => copyText(
-      `账号：${k.username}\n密码：${k.password}\n密钥：${k.key}`, copyAll));
-    ops.appendChild(copyAll);
+    if (k.bound) {
+      const copyAll = el('button', 'btn small', '复制账号+密码+密钥');
+      copyAll.addEventListener('click', () => copyText(
+        `账号：${k.username}\n密码：${k.password}\n密钥：${k.key}`, copyAll));
+      ops.appendChild(copyAll);
+    }
     if (k.status === 'unused') {
       const revoke = el('button', 'btn small ghost', '撤销');
       revoke.addEventListener('click', () => revokeKey(k));
@@ -129,15 +134,12 @@ async function copyText(text, btn) {
 
 async function genKeys() {
   const days = Number($('#keyDays').value);
-  const username = $('#keyUsername').value.trim();
-  const password = $('#keyPassword').value;
-  const count = username ? 1 : Math.max(1, Math.min(20, Number($('#keyCount').value) || 1));
-  const body = { days, count, username, password, note: $('#keyNote').value.trim() };
+  const count = Math.max(1, Math.min(20, Number($('#keyCount').value) || 1));
+  const body = { days, count, note: $('#keyNote').value.trim() };
   $('#genKeyBtn').disabled = true;
   try {
     const data = await api('/api/admin/keys', { method: 'POST', body });
     showKeyMsg(`已生成 ${data.keys.length} 把密钥`, 'ok');
-    $('#keyPassword').value = '';
     await load();
   } catch (err) {
     showKeyMsg(err.message, 'bad');

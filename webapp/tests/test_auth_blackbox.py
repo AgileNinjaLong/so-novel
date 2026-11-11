@@ -78,52 +78,65 @@ def main() -> int:
         check(overview["keys"] == [], "初始没有密钥")
         check(overview["grant_presets"] == [1, 31, 124, 372, 999999], "档位正确")
 
-        print("[4] 生成密钥：账号密码自动生成")
+        print("[4] 生成密钥：只带有效期，不生成账号密码")
         keys = make_keys(admin, days=372, count=2)
         check(len(keys) == 2, "生成 2 把")
         check(len({k["key"] for k in keys}) == 2, "密钥不同")
-        check(all(k["username"] and k["password"] for k in keys), "每把都有账号密码")
-        check(len({k["username"] for k in keys}) == 2, "账号不同")
+        check(all(k["bound"] is False and k["username"] == "" and k["password"] == "" for k in keys),
+              "未生成账号密码")
         check(all(k["status"] == "unused" and k["days_text"] == "372 天" for k in keys), "状态与天数正确")
         check(body(anon.get("/api/meta"))["app"]["unused_keys"] == 2, "剩余可用密钥 2 把")
 
-        print("[5] 查询密钥直接给出账号密码，激活后即可登录")
+        print("[5] 注册时用户自己设置账号密码，成功后绑定到密钥")
         k0 = keys[0]
         info = body(anon.get("/api/auth/key-info?key=" + k0["key"]))
         check(info["valid"] is True, "密钥有效")
-        check(info["username"] == k0["username"] and info["password"] == k0["password"], "返回绑定账号密码")
+        check(info["username"] == "" and info["password"] == "", "未注册前没有账号")
+        check(info.get("needs_credentials") is True, "提示由用户设置账密")
+
         alice = client(base)
-        resp = alice.post("/api/auth/register", json={"key": k0["key"]})
-        check(resp.status_code == 201, "激活成功")
+        resp = alice.post(
+            "/api/auth/register",
+            json={"key": k0["key"], "username": "alice01", "password": "alice-pass-1"},
+        )
+        check(resp.status_code == 201, "注册成功")
         user_a = body(resp)["user"]
-        check(user_a["username"] == k0["username"], "账号为密钥绑定账号")
+        check(user_a["username"] == "alice01", "账号为用户自设")
         check(user_a["remaining_days"] == 372, "有效期 372 天")
-        check(user_a["active"] is True, "激活即可用")
+        check(user_a["active"] is True, "注册即可用")
         check(
-            client(base).post("/api/auth/login", json={"username": k0["username"], "password": k0["password"]}).status_code == 200,
-            "用绑定账号密码可登录",
+            client(base).post("/api/auth/login", json={"username": "alice01", "password": "alice-pass-1"}).status_code == 200,
+            "可用自设密码登录",
         )
 
-        print("[6] 一钥一用：重复激活被拒，已用密钥仍显示账号密码")
-        check(anon.post("/api/auth/register", json={"key": k0["key"]}).status_code == 403, "重复激活 403")
-        used = body(anon.get("/api/auth/key-info?key=" + k0["key"]))
-        check(used["valid"] is False, "已用密钥不可用")
-        check(used["username"] == k0["username"] and used["password"] == k0["password"], "仍返回账号密码")
-        check(used.get("used_by_name") == k0["username"], "返回使用者")
-
-        print("[7] 管理员指定账号密码")
-        named = make_keys(admin, days=31, username="boss", password="boss-pass-1")
-        check(len(named) == 1 and named[0]["username"] == "boss", "只生成 1 把且账号为指定值")
-        boss = client(base)
-        check(boss.post("/api/auth/register", json={"key": named[0]["key"]}).status_code == 201, "指定账号激活成功")
-        check(boss.post("/api/auth/login", json={"username": "boss", "password": "boss-pass-1"}).status_code == 200, "可用指定密码登录")
-
-        print("[8] 后台密钥列表：账号密码与使用者")
+        print("[6] 后台可见绑定后的账号密码；密钥只能注册一次")
         keys_now = body(admin.get("/api/admin/keys"))["keys"]
-        used_keys = [k for k in keys_now if k["status"] == "used"]
-        check(len(used_keys) >= 2, "已使用的密钥被标记")
-        check(all(k["username"] and k["password"] for k in keys_now), "所有密钥都带账号密码")
-        check(any(k["used_by_name"] for k in used_keys), "已用密钥显示使用者")
+        bound = [k for k in keys_now if k["key"] == k0["key"]][0]
+        check(bound["bound"] is True, "密钥已绑定账号")
+        check(bound["username"] == "alice01", "后台显示注册的账号")
+        check(bound["password"] == "alice-pass-1", "后台显示该账号的密码")
+        check(bound["used_by_name"] == "alice01", "后台显示使用者")
+        check(anon.post("/api/auth/register", json={"key": k0["key"], "username": "x2", "password": "password123"}).status_code == 403,
+              "重复注册 403")
+        used = body(anon.get("/api/auth/key-info?key=" + k0["key"]))
+        check(used["valid"] is False and used["username"] == "alice01", "已用密钥查询显示绑定账号")
+
+        print("[7] 用户名冲突：同一账号名不能注册两次")
+        check(
+            anon.post(
+                "/api/auth/register",
+                json={"key": keys[1]["key"], "username": "alice01", "password": "password123"},
+            ).status_code == 409,
+            "重名注册 409",
+        )
+
+        print("[8] 后台密钥列表：已绑定的密钥带账号密码，未绑定的不带")
+        keys_now = body(admin.get("/api/admin/keys"))["keys"]
+        bound_keys = [k for k in keys_now if k["bound"]]
+        check(len(bound_keys) >= 1, "存在已绑定的密钥")
+        check(all(k["username"] and k["password"] for k in bound_keys), "已绑定的密钥都带账号密码")
+        check(all(not k["username"] for k in keys_now if not k["bound"]), "未绑定的密钥没有账号")
+        check(any(k["used_by_name"] for k in bound_keys), "已用密钥显示使用者")
 
         print("[9] 有效期叠加 / 永久 / 非法档位")
         uid = user_a["id"]
@@ -150,23 +163,23 @@ def main() -> int:
 
         print("[12] 管理员重置密码")
         reset = body(admin.post(f"/api/admin/users/{uid}/password"))
-        check(len(reset["password"]) >= 8 and reset["password"] != k0["password"], "返回新密码")
+        check(len(reset["password"]) >= 8 and reset["password"] != "alice-pass-1", "返回新密码")
         check(alice.get("/api/state").status_code == 401, "重置后旧会话失效")
         check(
-            client(base).post("/api/auth/login", json={"username": k0["username"], "password": reset["password"]}).status_code == 200,
+            client(base).post("/api/auth/login", json={"username": "alice01", "password": reset["password"]}).status_code == 200,
             "新密码可登录",
         )
 
         print("[13] 禁用用户：登录被拒、会话立即失效")
         victim = client(base)
         check(
-            victim.post("/api/auth/login", json={"username": k0["username"], "password": reset["password"]}).status_code == 200,
+            victim.post("/api/auth/login", json={"username": "alice01", "password": reset["password"]}).status_code == 200,
             "禁用前可登录",
         )
         check(admin.post(f"/api/admin/users/{uid}/status", json={"status": "banned"}).status_code == 200, "禁用成功")
         check(victim.get("/api/state").status_code == 401, "禁用后原有会话失效")
         check(
-            client(base).post("/api/auth/login", json={"username": k0["username"], "password": reset["password"]}).status_code == 403,
+            client(base).post("/api/auth/login", json={"username": "alice01", "password": reset["password"]}).status_code == 403,
             "禁用后无法登录",
         )
 
@@ -175,11 +188,10 @@ def main() -> int:
         check(admin.post(f"/api/admin/users/{admin_id}/status", json={"status": "banned"}).status_code == 400, "不能禁用自己")
         check(admin.delete(f"/api/admin/users/{admin_id}").status_code == 400, "不能删除自己")
 
-        print("[15] 预置用户名冲突 / 用户名校验")
-        check(
-            admin.post("/api/admin/keys", json={"days": 1, "username": "boss", "password": "boss-pass-1"}).status_code == 409,
-            "用户名已存在 409",
-        )
+        print("[15] 生成数量上限为 20 把")
+        many = make_keys(admin, days=1, count=50)
+        check(len(many) == 20, "超过 20 自动截断为 20")
+        check(all(k["bound"] is False for k in many), "批量生成的密钥都不带账号")
 
         print("[16] 登录暴力破解：连续失败后锁定（持久化）")
         victim_name = k0["username"]
@@ -200,8 +212,14 @@ def main() -> int:
         check(429 in codes, "大量无效密钥查询触发 429")
 
         print("[18] 登出")
-        check(boss.post("/api/auth/logout").status_code == 200, "登出成功")
-        check(boss.get("/api/state").status_code == 401, "登出后 401")
+        carol = client(base)
+        resp = carol.post(
+            "/api/auth/register",
+            json={"key": keys[1]["key"], "username": "carol01", "password": "carol-pass-1"},
+        )
+        check(resp.status_code == 201, "用第二把密钥注册新账号")
+        check(carol.post("/api/auth/logout").status_code == 200, "登出成功")
+        check(carol.get("/api/state").status_code == 401, "登出后 401")
 
     print()
     if FAILED:

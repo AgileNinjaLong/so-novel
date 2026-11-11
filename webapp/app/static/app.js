@@ -15,10 +15,12 @@ const state = {
   activeSource: null,
   pendingSource: null,
   picked: null,
+  mode: 'search',
+  searching: false,
   timer: null,
 };
 
-/* ---------------- 基础请求 ---------------- */
+/* ---------------- 请求封装 ---------------- */
 
 async function api(url, opts = {}) {
   const options = { ...opts, headers: { ...(opts.headers || {}) }, credentials: 'same-origin' };
@@ -27,10 +29,7 @@ async function api(url, opts = {}) {
     options.body = JSON.stringify(options.body);
   }
   const res = await fetch(url, options);
-  if (res.status === 401) {
-    location.href = '/login';
-    throw new Error('未登录');
-  }
+  if (res.status === 401) { location.href = '/login'; throw new Error('未登录'); }
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch (_) { data = null; }
@@ -77,7 +76,6 @@ async function loadMeta() {
 function renderUser() {
   const me = state.me;
   if (!me) return;
-  $('#userName').textContent = me.username;
   const chip = $('#userChip');
   chip.className = 'user-chip';
   let text = me.username;
@@ -117,22 +115,20 @@ function renderSourceStatus() {
   const box = $('#sourceStatus');
   box.innerHTML = '';
   if (!p) return;
-  const line = el('div');
-  line.appendChild(el('strong', '', p.name));
-  line.appendChild(document.createTextNode(' · ' + p.upstream));
-  box.appendChild(line);
-  box.appendChild(el('div', p.ready ? 'ok' : 'bad', p.ready ? '就绪 ' + (p.status_detail || '') : p.status_detail));
-  if (p.capabilities.notes) box.appendChild(el('div', '', p.capabilities.notes));
+  box.appendChild(el('div', '', `${p.name} · ${p.upstream}`));
+  box.appendChild(el('div', p.ready ? 'ok' : 'bad',
+    p.ready ? '就绪 ' + (p.status_detail || '') : p.status_detail));
 }
+
+/* ---------------- 能力与模式 ---------------- */
 
 function applyCapabilities() {
   const p = currentPlugin();
   if (!p) return;
   const caps = p.capabilities;
-  $('#inputTitle').textContent = `提交下载 · ${p.name}`;
-  $('#inputHint').textContent = caps.input_hint;
-  $('#searchMode').classList.toggle('hidden', !caps.search);
-  $('#urlMode').classList.toggle('hidden', caps.search);
+
+  $('#modeTabs').classList.toggle('hidden', !caps.search);
+  if (!caps.search) state.mode = 'link';
 
   const fmt = $('#fmtSelect');
   fmt.innerHTML = '';
@@ -141,9 +137,27 @@ function applyCapabilities() {
     opt.value = f;
     fmt.appendChild(opt);
   });
-  state.picked = null;
-  $('#enqueueMsg').textContent = '';
+
+  $('#searchHint').textContent = caps.input_hint;
+  $('#linkHint').textContent = caps.input_hint;
+
+  resetSelection(true);
   $('#searchResults').innerHTML = '';
+  $('#searchMeta').textContent = '';
+  const remembered = localStorage.getItem(`novel.q.${state.activeSource}`);
+  if (remembered && caps.search) $('#searchBox').value = remembered;
+  setMode(caps.search ? 'search' : 'link');
+}
+
+function setMode(mode) {
+  const p = currentPlugin();
+  if (mode === 'search' && !(p && p.capabilities.search)) mode = 'link';
+  state.mode = mode;
+  $('#searchPane').classList.toggle('hidden', mode !== 'search');
+  $('#linkPane').classList.toggle('hidden', mode !== 'link');
+  $('#modeTabs').querySelectorAll('.tab').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
 }
 
 /* ---------------- 事件 ---------------- */
@@ -151,8 +165,27 @@ function applyCapabilities() {
 function bindEvents() {
   $('#switchBtn').addEventListener('click', () => askSwitch());
   $('#sourceSelect').addEventListener('change', () => askSwitch());
+
+  $('#modeTabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab');
+    if (btn) setMode(btn.dataset.mode);
+  });
+
   $('#searchBtn').addEventListener('click', doSearch);
   $('#searchBox').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+  $('#searchBox').addEventListener('input', () => {
+    const has = $('#searchBox').value.trim().length > 0;
+    $('#clearSearch').classList.toggle('hidden', !has);
+  });
+  $('#clearSearch').addEventListener('click', () => {
+    $('#searchBox').value = '';
+    $('#clearSearch').classList.add('hidden');
+    $('#searchResults').innerHTML = '';
+    $('#searchMeta').textContent = '';
+    resetSelection();
+    $('#searchBox').focus();
+  });
+
   $('#enqueueBtn').addEventListener('click', enqueue);
   $('#refreshBtn').addEventListener('click', refresh);
   $('#cleanupBtn').addEventListener('click', cleanup);
@@ -167,6 +200,8 @@ async function logout() {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch (_) {}
   location.href = '/login';
 }
+
+/* ---------------- 来源切换 ---------------- */
 
 function askSwitch() {
   const target = $('#sourceSelect').value;
@@ -194,7 +229,8 @@ async function applySwitch(mode) {
     state.activeSource = result.active_source;
     $('#sourceSelect').value = result.active_source;
     applyCapabilities();
-    showMsg(result.message + (result.canceled && result.canceled.length ? `（取消 ${result.canceled.length} 个排队任务）` : ''), 'ok');
+    showMsg(result.message + (result.canceled && result.canceled.length
+      ? `（取消 ${result.canceled.length} 个排队任务）` : ''), 'ok');
     await loadMeta();
     await refresh();
   } catch (err) {
@@ -211,75 +247,142 @@ function closeModal() {
 
 /* ---------------- 搜索 ---------------- */
 
+function setSearching(flag) {
+  state.searching = flag;
+  const btn = $('#searchBtn');
+  btn.disabled = flag;
+  btn.textContent = flag ? '搜索中…' : '搜索';
+}
+
 async function doSearch() {
-  const q = $('#searchBox').value.trim();
-  if (!q) return;
-  const box = $('#searchResults');
-  box.innerHTML = '<li class="muted">搜索中…</li>';
+  const typed = $('#searchBox').value.trim();
+  if (!typed) { showSearchMeta('请输入书名', 'bad'); return; }
+  if (/^https?:\/\//i.test(typed)) {
+    setMode('link');
+    $('#urlBox').value = typed;
+    showMsg('已识别为链接，直接在下方选择格式后加入队列', 'ok');
+    return;
+  }
+  const p = currentPlugin();
+  if (!p || !p.capabilities.search) {
+    setMode('link');
+    $('#urlBox').value = typed;
+    return;
+  }
+
+  localStorage.setItem(`novel.q.${state.activeSource}`, typed);
+  setSearching(true);
+  $('#searchResults').innerHTML = '';
+  showSearchMeta(`正在搜索「${typed}」…`);
+  $('#clearSearch').classList.remove('hidden');
   try {
-    const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
-    box.innerHTML = '';
-    if (!data.items.length) { box.appendChild(el('li', 'muted', '没有找到结果')); return; }
-    data.items.forEach((item) => {
-      const li = el('li');
-      const left = el('div');
-      left.appendChild(el('div', 'name', item.title));
-      left.appendChild(el('div', 'meta', item.author || ''));
-      const pick = el('button', 'btn small', '选择');
-      pick.addEventListener('click', () => {
-        state.picked = item;
-        $('#titleBox').value = item.title;
-        showMsg(`已选择《${item.title}》，可直接加入队列`, 'ok');
-      });
-      li.appendChild(left);
-      li.appendChild(pick);
-      box.appendChild(li);
-    });
+    const data = await api(`/api/search?q=${encodeURIComponent(typed)}`);
+    renderResults(data.items || [], typed);
   } catch (err) {
-    box.innerHTML = '';
-    box.appendChild(el('li', 'muted', '搜索失败：' + err.message));
+    showSearchMeta(`搜索失败：${err.message}`, 'bad');
+  } finally {
+    setSearching(false);
   }
 }
 
-/* ---------------- 提交 ---------------- */
+function showSearchMeta(text, kind) {
+  const box = $('#searchMeta');
+  box.textContent = text || '';
+  box.className = 'search-meta' + (kind ? ' ' + kind : '');
+}
+
+function renderResults(items, query) {
+  const box = $('#searchResults');
+  box.innerHTML = '';
+  resetSelection();
+  if (!items.length) {
+    showSearchMeta(`没有找到「${query}」相关结果，试试其它关键词或直接粘贴详情页链接`);
+    return;
+  }
+  showSearchMeta(`找到 ${items.length} 个结果 · 点击「选择」后可加入下载队列`);
+  items.forEach((item) => {
+    const card = el('div', 'result-item');
+
+    const main = el('div', 'result-main');
+    main.appendChild(el('div', 'result-title', item.title || '（无标题）'));
+
+    const sub = el('div', 'result-sub');
+    if (item.author) sub.appendChild(el('span', 'result-author', item.author));
+    const extraSource = item.extra && item.extra.source;
+    if (extraSource) sub.appendChild(el('span', 'badge', String(extraSource)));
+    if (!extraSource && item.extra && item.extra.book_id) {
+      sub.appendChild(el('span', 'badge', 'ID ' + item.extra.book_id));
+    }
+    if (sub.childNodes.length) main.appendChild(sub);
+
+    const extraBits = [];
+    if (item.extra && item.extra.latest_chapter) extraBits.push('最新：' + item.extra.latest_chapter);
+    if (item.extra && item.extra.updated) extraBits.push('更新：' + item.extra.updated);
+    if (extraBits.length) main.appendChild(el('div', 'result-extra', extraBits.join('　')));
+    card.appendChild(main);
+
+    const pickBtn = el('button', 'btn small pick-btn', '选择');
+    pickBtn.addEventListener('click', () => selectItem(item, card, pickBtn));
+    card.appendChild(pickBtn);
+    box.appendChild(card);
+  });
+}
+
+function selectItem(item, cardEl, btn) {
+  $('#searchResults').querySelectorAll('.result-item').forEach((n) => {
+    n.classList.remove('selected');
+    const b = n.querySelector('.pick-btn');
+    if (b) b.textContent = '选择';
+  });
+  cardEl.classList.add('selected');
+  btn.textContent = '已选择';
+  state.picked = item;
+  $('#pickTitle').textContent = `《${item.title}》` + (item.author ? ` · ${item.author}` : '');
+  $('#titleBox').value = item.title || '';
+  showMsg('已选择，确认格式后加入队列', 'ok');
+}
+
+function resetSelection(clearTitle) {
+  state.picked = null;
+  $('#pickTitle').textContent = '尚未选择书籍';
+  if (clearTitle !== false) $('#titleBox').value = '';
+}
+
+/* ---------------- 入队 ---------------- */
 
 async function enqueue() {
   const p = currentPlugin();
   if (!p) return;
   const fmt = $('#fmtSelect').value;
+  if (!fmt) return showMsg('请选择导出格式', 'bad');
   let ref = '';
   let title = $('#titleBox').value.trim();
 
-  if (p.capabilities.search) {
-    if (state.picked) {
-      ref = state.picked.book_ref;
-      title = title || state.picked.title;
-    } else {
-      const typed = $('#searchBox').value.trim();
-      if (/^https?:\/\//i.test(typed)) {
-        // 搜索框里直接粘贴详情页链接，跳过搜索
-        ref = typed;
-        title = title || typed;
-      } else if (/^\d{6,}$/.test(typed)) {
-        ref = typed;
-        title = title || `book ${typed}`;
-      } else {
-        return showMsg('请先搜索并选择一本书，或直接把详情页链接粘到搜索框', 'bad');
-      }
-    }
-  } else {
+  if (state.mode === 'link' || !p.capabilities.search) {
     ref = $('#urlBox').value.trim();
     if (!ref) return showMsg('请粘贴书籍详情页链接', 'bad');
+  } else if (state.picked) {
+    ref = state.picked.book_ref;
+    title = title || state.picked.title;
+  } else {
+    const typed = $('#searchBox').value.trim();
+    if (/^\d{6,}$/.test(typed)) {
+      ref = typed;
+      title = title || `book ${typed}`;
+    } else {
+      return showMsg('请先搜索并选择一本书，或切换到「粘贴链接」模式', 'bad');
+    }
   }
-  if (!fmt) return showMsg('请选择导出格式', 'bad');
 
   $('#enqueueBtn').disabled = true;
   try {
-    const data = await api('/api/tasks', { method: 'POST', body: { source: state.activeSource, title, book_ref: ref, fmt } });
+    const data = await api('/api/tasks', {
+      method: 'POST',
+      body: { source: state.activeSource, title, book_ref: ref, fmt },
+    });
     const pos = data.queue_position;
     showMsg(`已加入队列${pos ? `，排队第 ${pos} 位` : ''}`, 'ok');
-    state.picked = null;
-    $('#titleBox').value = '';
+    resetSelection();
     $('#urlBox').value = '';
     await refresh();
   } catch (err) {
@@ -305,7 +408,7 @@ async function refresh() {
     }
     renderBanner(snap);
     renderTasks(snap);
-  } catch (err) { /* 未登录会被 api() 跳转 */ }
+  } catch (_) { /* 未登录会自动跳转 */ }
 }
 
 function renderBanner(snap) {
@@ -322,7 +425,8 @@ function renderTasks(snap) {
   tbody.innerHTML = '';
   const tasks = snap.tasks || [];
   $('#emptyQueue').classList.toggle('hidden', tasks.length > 0);
-  $('#countBadge').textContent = `运行 ${snap.counts.running || 0} · 排队 ${snap.counts.queued || 0} · 待接收 ${snap.counts.ready || 0}`;
+  $('#countBadge').textContent =
+    `运行 ${snap.counts.running || 0} · 排队 ${snap.counts.queued || 0} · 待接收 ${snap.counts.ready || 0}`;
 
   tasks.forEach((t) => {
     const tr = document.createElement('tr');
@@ -416,13 +520,6 @@ async function pauseTask(id) {
   } catch (err) { showMsg(err.message, 'bad'); }
 }
 
-async function retryTask(id) {  try {
-    const data = await api(`/api/tasks/${id}/retry`, { method: 'POST' });
-    showMsg(`已重新排队${data.queue_position ? `，第 ${data.queue_position} 位` : ''}`, 'ok');
-    await refresh();
-  } catch (err) { showMsg(err.message, 'bad'); }
-}
-
 async function cancelTask(id) {
   try {
     await api(`/api/tasks/${id}`, { method: 'DELETE' });
@@ -430,8 +527,16 @@ async function cancelTask(id) {
   } catch (err) { showMsg(err.message, 'bad'); }
 }
 
+async function retryTask(id) {
+  try {
+    const data = await api(`/api/tasks/${id}/retry`, { method: 'POST' });
+    showMsg(`已重新排队${data.queue_position ? `，第 ${data.queue_position} 位` : ''}`, 'ok');
+    await refresh();
+  } catch (err) { showMsg(err.message, 'bad'); }
+}
+
 async function cleanup() {
-  if (!confirm('删除所有「失败」和「已取消」的任务记录（已完成的下载会保留）？')) return;
+  if (!confirm('删除「失败 / 已取消 / 已过期」的任务记录？已接收的下载不受影响。')) return;
   try {
     const data = await api('/api/cleanup', { method: 'POST', body: {} });
     showMsg(`已清理 ${data.removed} 条记录`, 'ok');

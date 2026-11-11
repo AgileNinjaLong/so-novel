@@ -72,10 +72,18 @@ def wait_until(fn, timeout: float = 90.0, interval: float = 0.8) -> bool:
 
 
 def signup_key(client: httpx.Client, admin: httpx.Client, days: int) -> dict:
-    """管理员生成一把「一钥一账号」的密钥，新用户用它激活（有效期随密钥）。"""
+    """管理员生成一把密钥；用户注册时自己设置账号密码，成功后绑定到该密钥。"""
     key = api(admin, "POST", "/api/admin/keys", json={"days": days, "count": 1})["keys"][0]
-    user = api(client, "POST", "/api/auth/register", json={"key": key["key"]})["user"]
+    username = f"u{uuid.uuid4().hex[:8]}"
+    password = "user-pass-1"
+    user = api(
+        client,
+        "POST",
+        "/api/auth/register",
+        json={"key": key["key"], "username": username, "password": password},
+    )["user"]
     user["_key"] = key
+    user["_password"] = password
     return user
 
 
@@ -99,20 +107,19 @@ def main() -> int:
     for plugin in meta["plugins"]:
         check(plugin["ready"], f"{plugin['name']} 就绪（{plugin['status_detail']}）")
 
-    print("[2] 用两把密钥激活两个用户")
+    print("[2] 用两把密钥注册两个用户（账号密码由用户自设）")
     alice = make_client()
     bob = make_client()
     user_a = signup_key(alice, admin, 372)
     user_b = signup_key(bob, admin, 31)
-    check(user_a["username"] == user_a["_key"]["username"], "用户A 账号来自密钥")
+    check(user_a["username"].startswith("u"), "用户A 账号为自己设置")
     check(user_a["remaining_days"] == 372, "用户A 有效期来自密钥（372 天）")
     check(user_b["remaining_days"] == 31, "用户B 有效期来自密钥（31 天）")
     keys = api(admin, "GET", "/api/admin/keys")["keys"]
-    used = [k for k in keys if k["status"] == "used"]
-    check(len(used) >= 2, "两把密钥都已标记使用")
     ours = [k for k in keys if k["key"] in {user_a["_key"]["key"], user_b["_key"]["key"]}]
     check(len(ours) == 2, "能在后台找到本轮生成的两把密钥")
-    check(all(k["username"] and k["password"] for k in ours), "已用密钥仍显示账号密码")
+    check(all(k["bound"] for k in ours), "注册成功后密钥已绑定账号")
+    check(all(k["username"] and k["password"] for k in ours), "后台显示绑定后的账号与密码")
     check(all(k["used_by_name"] for k in ours), "已用密钥显示使用者")
 
     print("[2b] so-novel 聚合搜索可用（借用其 Web 接口）")

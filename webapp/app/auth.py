@@ -86,7 +86,7 @@ def key_public_info(code: str, *, ip: str = "-") -> dict[str, Any]:
         return {"valid": False, "reason": "密钥不存在"}
     if row["status"] == "used":
         throttle.record_failure("keyinfo_ip", ip)
-        # 已使用的密钥仍展示它绑定的账号，方便持有人/管理员确认
+        # 已使用的密钥展示它绑定后的账号（密码在注册时由用户自己设置）
         return {
             "valid": False,
             "reason": "该密钥已被使用",
@@ -99,23 +99,23 @@ def key_public_info(code: str, *, ip: str = "-") -> dict[str, Any]:
         throttle.record_failure("keyinfo_ip", ip)
         return {"valid": False, "reason": "该密钥已被管理员撤销"}
     throttle.clear("keyinfo_ip", ip)
-    info = {
+    return {
         "valid": True,
         "mode": row["mode"],
         "days": row["days"],
         "permanent": bool(row["permanent"]),
         "days_text": "永久" if row["permanent"] else f"{row['days']} 天",
-        # 一钥一账号：无论是否已使用，都把对应账号密码展示出来
-        "username": row.get("username") or "",
-        "password": row.get("password_plain") or "",
+        # 未绑定时还没有账号，账号密码由用户在注册时自己填写
+        "username": "",
+        "password": "",
+        "needs_credentials": True,
     }
-    return info
 
 
 def redeem_key(
     code: str, username: str = "", password: str = "", *, ip: str = "-"
 ) -> dict[str, Any]:
-    """用密钥激活一个账号；密钥只能用一次，账号密码由管理员预置。"""
+    """用户用密钥注册：自己设置账号密码，成功后密钥与该账号绑定。"""
     throttle.check("redeem_ip", ip)
     throttle.check("register_ip", ip)
     row = store.get_invite_key_by_code(code.strip())
@@ -129,29 +129,21 @@ def redeem_key(
             detail="该密钥已被使用或已撤销，请联系管理员重新获取",
         )
 
-    if row["mode"] == KEY_MODE_BOUND or (row.get("username") and row.get("password_plain")):
-        username = (row["username"] or "").strip()
-        password = row["password_plain"] or ""
-        if not username or not password:
-            raise HTTPException(status_code=500, detail="密钥的账号数据不完整")
-    else:
-        # 兼容历史遗留的开放型密钥（新流程不再生成）
-        username = username.strip()
-        if not USERNAME_RE.match(username):
-            throttle.record_failure("redeem_ip", ip)
-            raise HTTPException(
-                status_code=400,
-                detail="用户名需 3-24 位，可用中英文、数字、下划线、短横线",
-            )
-        if not (PASSWORD_MIN <= len(password) <= PASSWORD_MAX):
-            throttle.record_failure("redeem_ip", ip)
-            raise HTTPException(
-                status_code=400, detail=f"密码长度需 {PASSWORD_MIN}-{PASSWORD_MAX} 位"
-            )
-
+    username = username.strip()
+    if not USERNAME_RE.match(username):
+        throttle.record_failure("redeem_ip", ip)
+        raise HTTPException(
+            status_code=400,
+            detail="用户名需 3-24 位，可用中英文、数字、下划线、短横线",
+        )
+    if not (PASSWORD_MIN <= len(password) <= PASSWORD_MAX):
+        throttle.record_failure("redeem_ip", ip)
+        raise HTTPException(
+            status_code=400, detail=f"密码长度需 {PASSWORD_MIN}-{PASSWORD_MAX} 位"
+        )
     if store.username_exists(username):
         throttle.record_failure("redeem_ip", ip)
-        raise HTTPException(status_code=409, detail="该账号已存在，请联系管理员")
+        raise HTTPException(status_code=409, detail="该用户名已被占用，请换一个")
 
     permanent = bool(row["permanent"])
     expires_at = None
@@ -169,81 +161,43 @@ def redeem_key(
         permanent=permanent,
         expires_at=expires_at,
     )
-    store.mark_invite_key_used(row["id"], user["id"], username)
+    # 绑定密钥与账号（密码明文仅用于后台展示，见 README 的安全说明）
+    store.bind_invite_key(
+        row["id"], user_id=user["id"], username=username, password_plain=password
+    )
     throttle.clear("redeem_ip", ip)
     throttle.clear("register_ip", ip)
     return user
-
-
-def _gen_username(exists: Any) -> str:
-    from .security import nanoid
-
-    for _ in range(20):
-        candidate = "u" + nanoid(7, "abcdefghjkmnpqrstuvwxyz23456789")
-        if not exists(candidate):
-            return candidate
-    raise HTTPException(status_code=500, detail="生成用户名失败")
-
-
-def _gen_password() -> str:
-    from .security import nanoid
-
-    return nanoid(10, "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789")
 
 
 def generate_invite_keys(
     *,
     days: int,
     count: int = 1,
-    username: str = "",
-    password: str = "",
     note: str = "",
     created_by: str = "",
 ) -> list[dict[str, Any]]:
-    """管理员生成「一钥一账号」的密钥。
-
-    - 填了用户名：必须同时给密码（或留空自动生成），且只能生成 1 把；
-    - 用户名留空：按数量自动生成账号与密码，每把密钥对应不同账号。
-    """
+    """只生成密钥与有效期，不创建账号；账号由用户注册时自己设置。"""
     if days not in validity.GRANT_PRESETS:
         raise HTTPException(
             status_code=400,
             detail=f"days 只能是 {'/'.join(str(d) for d in validity.GRANT_PRESETS)}",
         )
-    username = username.strip()
-    if username:
-        count = 1
-        if not USERNAME_RE.match(username):
-            raise HTTPException(
-                status_code=400,
-                detail="用户名需 3-24 位，可用中英文、数字、下划线、短横线",
-            )
-        if password and not (PASSWORD_MIN <= len(password) <= PASSWORD_MAX):
-            raise HTTPException(
-                status_code=400, detail=f"密码需 {PASSWORD_MIN}-{PASSWORD_MAX} 位"
-            )
-        if store.username_exists(username):
-            raise HTTPException(status_code=409, detail="该用户名已被占用")
-    else:
-        password = ""
     count = max(1, min(20, int(count)))
-
     permanent = days >= validity.PERMANENT_DAYS
     created: list[dict[str, Any]] = []
     for _ in range(count):
-        uname = username or _gen_username(store.username_exists)
-        pwd = password or _gen_password()
         code = unique_nanoid(21, store.invite_key_code_exists)
         key_id = unique_nanoid(16, lambda _id: store.get_invite_key(_id) is not None)
         created.append(
             store.create_invite_key(
                 key_id=key_id,
                 code=code,
-                mode=KEY_MODE_BOUND,
+                mode=KEY_MODE_OPEN,
                 days=days,
                 permanent=permanent,
-                username=uname,
-                password_plain=pwd,
+                username=None,
+                password_plain=None,
                 note=note,
                 created_by=created_by,
             )
