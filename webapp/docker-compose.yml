@@ -1,0 +1,28 @@
+services:
+  novel-web:
+    build:
+      context: .
+      args:
+        SONOVEL_VERSION: "1.12.0"
+        TOMATO_VERSION: "2.4.16"
+    image: novel-webapp:local
+    container_name: novel-webapp
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # 公网部署请务必设置访问口令
+      WEBAPP_PASSWORD: "${WEBAPP_PASSWORD:-}"
+      # 番茄服务只监听容器内 127.0.0.1，用内部口令保护
+      TOMATO_PASSWORD: "${TOMATO_PASSWORD:-webapp-internal}"
+      WEBAPP_DEFAULT_SOURCE: "${WEBAPP_DEFAULT_SOURCE:-sonovel}"
+      # 不限制单个任务时长（0 = 不限）
+      WEBAPP_TASK_TIMEOUT: "${WEBAPP_TASK_TIMEOUT:-0}"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

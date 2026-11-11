@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小说下载 · 多源 WebUI</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">书</span>
+    <div>
+      <h1>小说下载 WebUI</h1>
+      <p class="sub">多来源插件 · 全局单线程队列</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <label class="userbox">
+      <span>昵称</span>
+      <input id="userName" maxlength="24" placeholder="匿名" autocomplete="off">
+    </label>
+    <span id="authBadge" class="badge hidden"></span>
+  </div>
+</header>
+
+<section class="source-bar card">
+  <div class="source-left">
+    <label for="sourceSelect">下载来源</label>
+    <select id="sourceSelect"></select>
+    <button id="switchBtn" class="btn primary">切换来源</button>
+  </div>
+  <div class="source-right">
+    <div id="sourceStatus" class="source-status"></div>
+  </div>
+</section>
+
+<div id="switchBanner" class="banner hidden"></div>
+
+<main class="layout">
+  <section class="card input-card">
+    <h2 id="inputTitle">提交下载</h2>
+    <p id="inputHint" class="hint"></p>
+    <div id="searchMode" class="mode hidden">
+      <div class="row">
+        <input id="searchBox" type="text" placeholder="输入书名搜索…" autocomplete="off">
+        <button id="searchBtn" class="btn">搜索</button>
+      </div>
+      <ul id="searchResults" class="results"></ul>
+    </div>
+    <div id="urlMode" class="mode hidden">
+      <div class="row">
+        <input id="urlBox" type="text" placeholder="粘贴书籍详情页链接，例如 https://www.xxx.com/book/123.html" autocomplete="off">
+      </div>
+    </div>
+    <div class="row fmt-row">
+      <label for="fmtSelect">导出格式</label>
+      <select id="fmtSelect"></select>
+      <label for="titleBox" class="ml">书名（可留空）</label>
+      <input id="titleBox" type="text" placeholder="留空则由来源自动识别" autocomplete="off">
+      <button id="enqueueBtn" class="btn primary">加入下载队列</button>
+    </div>
+    <p id="enqueueMsg" class="msg"></p>
+  </section>
+
+  <section class="card queue-card">
+    <div class="queue-head">
+      <h2>下载队列 <span id="countBadge" class="count"></span></h2>
+      <button id="refreshBtn" class="btn ghost">刷新</button>
+    </div>
+    <p class="hint">同一时间只下载一本；多人同时提交时会按顺序排队，先到先得。</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>状态</th><th>书名</th><th>来源</th><th>提交者</th><th>进度</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="taskBody"></tbody>
+      </table>
+      <p id="emptyQueue" class="empty">队列为空，先在上方提交一本吧。</p>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <h3>切换下载来源</h3>
+    <p id="modalText"></p>
+    <div class="modal-actions">
+      <button id="modalCancel" class="btn ghost">取消</button>
+      <button id="modalAfter" class="btn">等当前任务结束后切换</button>
+      <button id="modalNow" class="btn danger">立即取消并切换</button>
+    </div>
+  </div>
+</div>
+
+<template id="rowTpl">
+  <tr>
+    <td class="status-cell"></td>
+    <td class="title-cell"></td>
+    <td class="source-cell"></td>
+    <td class="user-cell"></td>
+    <td class="progress-cell"></td>
+    <td class="action-cell"></td>
+  </tr>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
