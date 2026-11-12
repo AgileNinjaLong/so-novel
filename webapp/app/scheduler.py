@@ -24,6 +24,21 @@ from .plugins.base import CanceledError, Plugin
 PRUNE_KEEP = 200
 
 
+def _dir_size(path: Path) -> int:
+    """临时目录当前总大小（用于把「文件在变大」也算作进度）。"""
+    total = 0
+    try:
+        for entry in path.rglob("*"):
+            try:
+                if entry.is_file():
+                    total += entry.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        return total
+    return total
+
+
 def _human_size(num: int) -> str:
     size = float(num)
     for unit in ("B", "KB", "MB", "GB"):
@@ -593,7 +608,7 @@ class Scheduler:
             store.finish_task(task["id"], store.STATUS_FAILED, error="来源插件不存在")
             return
 
-        last_progress = {"ts": 0.0, "pct": -1.0, "done": -1, "total": -1}
+        last_progress = {"ts": 0.0, "pct": -1.0, "done": -1, "total": -1, "message": ""}
         # 任何一次进度回调都算「有动静」；连续 stall_timeout_sec 没有动静就判定卡住
         activity = {"ts": time.time()}
         stall_limit = int(settings.stall_timeout_sec or 0)
@@ -608,7 +623,6 @@ class Scheduler:
             title: str | None = None,
         ) -> None:
             now = time.time()
-            activity["ts"] = now
             changed = False
             if percent is not None:
                 changed = abs(float(percent) - last_progress["pct"]) >= 0.5
@@ -619,7 +633,9 @@ class Scheduler:
             if total is not None and total != last_progress["total"]:
                 last_progress["total"] = total
                 changed = True
-            if message:
+            if message and message != last_progress["message"]:
+                # 只有文案真的变了才算进度；重复同一句不续命
+                last_progress["message"] = message
                 changed = True
             if title and self._title_is_placeholder(task["id"]):
                 # 只在用户没填书名时采用上游识别到的书名；已有书名绝不覆盖
@@ -630,6 +646,8 @@ class Scheduler:
                     pass
             if not changed or (now - last_progress["ts"]) < 0.4:
                 return
+            # 只有出现「真实进度变化」才刷新活跃时间；空转回调不算
+            activity["ts"] = now
             last_progress["ts"] = now
             fields: dict[str, Any] = {
                 "progress": max(0.0, min(100.0, last_progress["pct"] if last_progress["pct"] >= 0 else 0.0)),
@@ -643,8 +661,20 @@ class Scheduler:
                 pass
 
         def watchdog() -> None:
-            """进度长时间不更新就强制终止，避免任务永远卡在 running。"""
+            """连续 stall_limit 秒没有任何进度信号就强制终止。
+
+            进度信号包括：上游上报的章节数/百分比/消息变化，以及临时目录在变大
+            （有些上游边抓边写文件，不额外上报进度）。
+            """
+            last_size = -1
             while not stop_watchdog.is_set():
+                try:
+                    size = _dir_size(settings.temp_dir_for(task["id"]))
+                except OSError:
+                    size = last_size
+                if size != last_size:
+                    last_size = size
+                    activity["ts"] = time.time()
                 if stall_limit and (time.time() - activity["ts"]) > stall_limit:
                     timeout_hit.set()
                     cancel_event.set()

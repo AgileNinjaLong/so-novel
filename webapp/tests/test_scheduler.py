@@ -140,6 +140,46 @@ class SlowProgressPlugin(FakePlugin):
         return DownloadResult(file_path=str(path), title=task["title"])
 
 
+class FileGrowthPlugin(FakePlugin):
+    """只往临时目录写文件、不上报进度：文件在变大也应算「有进度」。"""
+
+    def __init__(self, pid: str, name: str, chunks: int = 8, interval: float = 0.5):
+        super().__init__(pid, name, seconds=chunks * interval)
+        self.chunks = chunks
+        self.interval = interval
+
+    def download(self, *, task, progress, cancel_event, library_dir):
+        out = Path(library_dir) / task["id"] / "download" / "book.txt"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "w", encoding="utf-8") as fp:
+            for i in range(self.chunks):
+                if cancel_event.is_set():
+                    raise CanceledError()
+                time.sleep(self.interval)  # 总时长 > stall 限制
+                fp.write("x" * 500)
+                fp.flush()
+        return DownloadResult(file_path=str(out), title=task["title"])
+
+
+class IdleProgressPlugin(FakePlugin):
+    """不停调用 progress 但数值一直不变：没有真实进度，仍应判超时。"""
+
+    def __init__(self, pid: str, name: str, stay: float = 30.0):
+        super().__init__(pid, name, seconds=stay)
+        self.stay = stay
+
+    def download(self, *, task, progress, cancel_event, library_dir):
+        deadline = time.time() + self.stay
+        while time.time() < deadline:
+            if cancel_event.is_set():
+                raise CanceledError()
+            progress(done=0, total=10, percent=0.0, message="已下载 0/10 章")
+            time.sleep(0.3)
+        if cancel_event.is_set():
+            raise CanceledError()
+        raise RuntimeError("stalled")
+
+
 def wait_until(predicate, timeout: float = 20.0, interval: float = 0.1) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -467,6 +507,45 @@ def main() -> int:
 
     app_settings.stall_timeout_sec = old_stall
     scheduler.remove_task(tid_slow)
+
+    print("[16] 只有真实进度才算：文件增长算进度，空转回调不算")
+    app_settings.stall_timeout_sec = 3
+
+    grow = FileGrowthPlugin("grow", "写文件源", chunks=10, interval=0.5)  # 5s > 3s，但每 0.5s 有写入
+    idle = IdleProgressPlugin("idle", "空转源", stay=30)
+    scheduler._plugins["grow"] = grow
+    scheduler._plugins["idle"] = idle
+
+    scheduler.request_switch("grow", "cancel_now")
+    t_grow = scheduler.enqueue(
+        source="grow", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="边写边下的书", book_ref="g", fmt="txt",
+    )
+    tid_grow = t_grow["task"]["id"]
+    check(
+        wait_until(lambda: store.get_task(tid_grow)["status"] in {"ready", "failed"}, 40),
+        "写文件任务结束",
+    )
+    row_grow = store.get_task(tid_grow)
+    check(row_grow["status"] == "ready",
+          f"文件持续变大 → 不超时，正常完成（实际 {row_grow['status']}）")
+
+    scheduler.request_switch("idle", "cancel_now")
+    t_idle = scheduler.enqueue(
+        source="idle", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="空转的书", book_ref="i", fmt="txt",
+    )
+    tid_idle = t_idle["task"]["id"]
+    check(
+        wait_until(lambda: store.get_task(tid_idle)["status"] in {"failed", "canceled"}, 25),
+        "空转任务被判结束",
+    )
+    row_idle = store.get_task(tid_idle)
+    check(row_idle["status"] == "failed",
+          f"反复报同样的进度也判超时（实际 {row_idle['status']}）")
+    check("超时" in (row_idle["error"] or ""), f"错误标明超时：{row_idle['error']}")
+
+    app_settings.stall_timeout_sec = old_stall
 
     scheduler.shutdown()
     print()
