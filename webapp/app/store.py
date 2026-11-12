@@ -459,6 +459,14 @@ def next_queued_task() -> dict[str, Any] | None:
     return _row_to_task(row) if row else None
 
 
+def running_tasks() -> list[dict[str, Any]]:
+    with _lock:
+        rows = _connection().execute(
+            "SELECT * FROM tasks WHERE status = ? ORDER BY seq ASC", (STATUS_RUNNING,)
+        ).fetchall()
+    return [_row_to_task(r) for r in rows]
+
+
 def running_task() -> dict[str, Any] | None:
     with _lock:
         row = _connection().execute(

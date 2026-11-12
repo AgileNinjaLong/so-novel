@@ -18,7 +18,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, store, validity
+from . import auth, searchsvc, store, validity
 from .config import settings
 from .plugins import build_plugins, default_source, describe_plugin
 from .plugins.base import Plugin
@@ -224,11 +224,15 @@ async def api_search(request: Request, q: str, source: str | None = None):
     if not query:
         raise HTTPException(status_code=400, detail="请输入书名")
     try:
-        items = await run_in_threadpool(plugin.search, query)
+        items, cached = await run_in_threadpool(
+            searchsvc.service().search, target, query, plugin
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"搜索失败：{exc}")
     return {
         "source": target,
+        "cached": cached,
+        "concurrency": settings.search_concurrency,
         "items": [
             {
                 "title": item.title,

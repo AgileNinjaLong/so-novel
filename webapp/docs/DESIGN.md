@@ -173,6 +173,21 @@ TTL sweep      → 超时未 ack → 删除、状态 expired
 不用「响应结束即删除」，因为服务端无法区分「浏览器已保存成功」与「断开但内核缓冲已接收」；
 改为前段 `fetch → blob → 保存 → ack`，保证**没有确认就不删**（最坏只是多留到 TTL）。
 
+### 并发（多用户同时下载 / 同时搜索）
+
+**下载**：`Scheduler` 启动 `WEBAPP_TASK_CONCURRENCY`（默认 2）个工作线程，每个线程
+独立领取任务；`_next_task_with_capacity()` 按 FIFO 找到第一个「来源还有名额」的排队任务。
+每个来源的并发上限由 `SOURCE_PARALLEL_LIMIT` 控制：`tomato: 1`（上游 `--server` 内部串行），
+其余按线程数。`_running_ids` 是内存里的权威计数，DB 的 `running` 只用于持久化与展示。
+
+**搜索**：`app/searchsvc.py` 提供进程内 `BoundedSemaphore`（`WEBAPP_SEARCH_CONCURRENCY`，默认 4）
+与 LRU 短缓存（`WEBAPP_SEARCH_CACHE`，默认 120 秒）。相同「来源+关键词」直接复用结果，
+所以多人同时搜不同词能并行、重复搜同一个词几乎瞬时。搜索本身跑在 `run_in_threadpool`，
+不阻塞事件循环。
+
+**内存**：每个 so-novel 任务是一个独立 JVM，用 `SONOVEL_XMX`（默认 512m）限制堆大小，
+2 核 / 3.5G 的机器实测可同时跑 2 个下载 + 并发搜索。
+
 ### 任务可见性（隔离）
 
 - `/api/state` 对普通用户只返回 `user_id == 自己` 的任务；管理员返回全部；

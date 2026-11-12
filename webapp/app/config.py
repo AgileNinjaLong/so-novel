@@ -50,6 +50,18 @@ class Settings:
     poll_interval_ms: int = field(default_factory=lambda: _env_int("WEBAPP_POLL_MS", 1500))
     # 单任务超时（秒），0 表示不限制
     task_timeout_sec: int = field(default_factory=lambda: _env_int("WEBAPP_TASK_TIMEOUT", 0))
+    # 同时下载的任务数（2 核小机器建议 2；内存充足可调大）
+    task_concurrency: int = field(
+        default_factory=lambda: max(1, _env_int("WEBAPP_TASK_CONCURRENCY", 2))
+    )
+    # 搜索并发上限（同时进行的搜索请求数）
+    search_concurrency: int = field(
+        default_factory=lambda: max(1, _env_int("WEBAPP_SEARCH_CONCURRENCY", 4))
+    )
+    # 搜索结果缓存秒数（相同来源+关键词在这段时间内直接复用）
+    search_cache_sec: int = field(
+        default_factory=lambda: max(0, _env_int("WEBAPP_SEARCH_CACHE", 120))
+    )
     # 运行中的任务若连续这么多秒没有任何进度更新，判定为卡住并终止（0=不检查）
     stall_timeout_sec: int = field(
         default_factory=lambda: _env_int("WEBAPP_STALL_TIMEOUT", 60)

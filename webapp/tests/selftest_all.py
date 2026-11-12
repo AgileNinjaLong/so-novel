@@ -39,6 +39,7 @@ UNIT_SUITES = [
     ("抗暴力破解：计数/锁定/持久化", "test_throttle.py"),
     ("密钥：一钥一账号/绑定/单次", "test_keys.py"),
     ("日志隔离：任务日志不串台", "test_log_filter.py"),
+    ("搜索服务：并发限流与缓存", "test_searchsvc.py"),
     ("调度器：单线程/切换/交付/TTL/删除", "test_scheduler.py"),
 ]
 BLACKBOX_SUITES = [

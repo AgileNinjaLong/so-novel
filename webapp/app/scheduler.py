@@ -65,16 +65,26 @@ class EnqueueError(Exception):
 
 
 class Scheduler:
-    def __init__(self, plugins: dict[str, Plugin], default_source: str):
+    # 单个来源最多同时跑几个任务（上游有硬限制的在这里声明）
+    SOURCE_PARALLEL_LIMIT = {"tomato": 1}
+
+    def __init__(
+        self,
+        plugins: dict[str, Plugin],
+        default_source: str,
+        workers: int | None = None,
+    ):
         self._plugins = plugins
         self._default_source = default_source
         self._cv = threading.Condition()
-        self._running_task_id: str | None = None
+        # 同时在跑的任务 id（内存里的权威计数，DB 只做持久化）
+        self._running_ids: set[str] = set()
         self._cancels: dict[str, threading.Event] = {}
         self._deliverables: dict[str, Path] = {}
         self._paused: set[str] = set()
         self._stop = False
-        self._thread: threading.Thread | None = None
+        self._workers = max(1, int(workers if workers is not None else settings.task_concurrency))
+        self._threads: list[threading.Thread] = []
         self._sweeper: threading.Thread | None = None
 
     # ---------------- 生命周期 ----------------
@@ -86,10 +96,13 @@ class Scheduler:
         # 待接收任务的临时文件在重启后已无意义
         store.recover_pending_ready()
         _wipe_temp_root()
-        self._thread = threading.Thread(
-            target=self._worker_loop, name="novel-download-worker", daemon=True
-        )
-        self._thread.start()
+        for i in range(self._workers):
+            thread = threading.Thread(
+                target=self._worker_loop, args=(i,),
+                name=f"novel-download-worker-{i}", daemon=True,
+            )
+            thread.start()
+            self._threads.append(thread)
         self._sweeper = threading.Thread(
             target=self._sweep_loop, name="novel-temp-sweeper", daemon=True
         )
@@ -109,7 +122,6 @@ class Scheduler:
     def snapshot(self, viewer: dict[str, Any] | None = None) -> dict[str, Any]:
         active = store.active_source(self._default_source)
         pending = store.pending_switch()
-        running = store.running_task()
         queued = store.queued_tasks()
         positions = {t["id"]: i + 1 for i, t in enumerate(queued)}
         ahead = {t["id"]: i for i, t in enumerate(queued)}
@@ -165,13 +177,27 @@ class Scheduler:
             tasks.append(item)
 
         running_visible = None
-        if running is not None and (viewer_is_admin or running.get("user_id") == viewer_id):
-            running_visible = {
-                "id": running["id"],
-                "title": running["title"],
-                "source": running["source"],
-            }
-        running_by_other = bool(running) and not viewer_is_admin and running.get("user_id") != viewer_id
+        running_all = store.running_tasks()
+        if running_all:
+            if viewer_is_admin:
+                running_visible = {
+                    "id": running_all[0]["id"],
+                    "title": running_all[0]["title"],
+                    "source": running_all[0]["source"],
+                    "count": len(running_all),
+                }
+            else:
+                own = [t for t in running_all if t.get("user_id") == viewer_id]
+                if own:
+                    running_visible = {
+                        "id": own[0]["id"],
+                        "title": own[0]["title"],
+                        "source": own[0]["source"],
+                        "count": len(own),
+                    }
+        running_by_other = any(
+            t.get("user_id") != viewer_id for t in running_all
+        ) and not viewer_is_admin
 
         return {
             "active_source": active,
@@ -184,6 +210,7 @@ class Scheduler:
             "counts": store.task_counts(None if viewer_is_admin else viewer_id),
             "tasks": tasks,
             "stall_timeout_sec": settings.stall_timeout_sec,
+            "task_concurrency": self._workers,
             "is_admin": viewer_is_admin,
         }
 
@@ -473,8 +500,8 @@ class Scheduler:
                     "message": f"当前已是「{plugin.name}」",
                 }
 
-            running = store.running_task()
-            if running is None:
+            running_now = store.running_tasks()
+            if not running_now:
                 canceled = self._cancel_other_queued(source)
                 store.set_setting("active_source", source)
                 store.set_pending_switch(None)
@@ -489,36 +516,36 @@ class Scheduler:
 
             if mode == "cancel_now":
                 canceled = self._cancel_other_queued(source)
-                event = self._cancels.get(running["id"])
-                if event is not None:
-                    event.set()
-                old_plugin = self._plugins.get(running["source"])
-                if old_plugin is not None:
-                    try:
-                        old_plugin.cancel(running["id"])
-                    except Exception:
-                        pass
+                for task in running_now:
+                    event = self._cancels.get(task["id"])
+                    if event is not None:
+                        event.set()
+                    old_plugin = self._plugins.get(task["source"])
+                    if old_plugin is not None:
+                        try:
+                            old_plugin.cancel(task["id"])
+                        except Exception:
+                            pass
                 store.set_setting("active_source", source)
                 store.set_pending_switch(None)
                 self._cv.notify_all()
+                titles = "、".join(f"「{t['title']}」" for t in running_now[:3])
                 return {
                     "active_source": source,
                     "pending_switch": None,
                     "canceled": canceled,
                     "applied": True,
-                    "message": (
-                        f"已切换到「{plugin.name}」，"
-                        f"正在下载的「{running['title']}」已被取消"
-                    ),
+                    "message": f"已切换到「{plugin.name}」，正在下载的 {titles} 已被取消",
                 }
 
-            # after_current：只允许当前正在下载的那个任务收尾
+            # after_current：等当前所有在跑的任务收尾后再切换
             canceled = self._cancel_other_queued(source)
             pending = {
                 "source": source,
                 "mode": mode,
                 "requested_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "waiting_for": running["id"],
+                "waiting_for": [t["id"] for t in running_now],
+                "waiting_count": len(running_now),
             }
             store.set_pending_switch(pending)
             self._cv.notify_all()
@@ -528,7 +555,7 @@ class Scheduler:
                 "canceled": canceled,
                 "applied": False,
                 "message": (
-                    f"「{self._plugin_name(active)}」正在下载「{running['title']}」，"
+                    f"「{self._plugin_name(active)}」还有 {len(running_now)} 个任务在下载，"
                     f"结束后将自动切换到「{plugin.name}」；旧来源的排队任务已取消"
                 ),
             }
@@ -545,7 +572,9 @@ class Scheduler:
         ]
 
     def _apply_pending_if_idle(self) -> None:
-        """仅在没有运行任务时调用：应用待切换的来源。"""
+        """仅在没有任务运行时调用：应用待切换的来源。"""
+        if self._running_ids:
+            return
         pending = store.pending_switch()
         if not pending:
             return
@@ -559,29 +588,50 @@ class Scheduler:
         store.set_pending_switch(None)
 
     # ---------------- 工作线程 --------------
-    def _worker_loop(self) -> None:
+    def _source_limit(self, source: str) -> int:
+        """这个来源最多能同时跑几个任务。"""
+        return min(self._workers, self.SOURCE_PARALLEL_LIMIT.get(source, self._workers))
+
+    def _running_by_source(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for task in store.running_tasks():
+            counts[task["source"]] = counts.get(task["source"], 0) + 1
+        return counts
+
+    def _next_task_with_capacity(self) -> dict[str, Any] | None:
+        """按 FIFO 找第一个「来源还有并发名额」的排队任务。"""
+        queued = store.queued_tasks()
+        if not queued:
+            return None
+        active = store.active_source(self._default_source)
+        counts = self._running_by_source()
+        for task in queued:
+            if task["source"] != active:
+                continue
+            if counts.get(task["source"], 0) >= self._source_limit(task["source"]):
+                continue
+            return task
+        return None
+
+    def _worker_loop(self, worker_id: int = 0) -> None:
         while True:
+            task: dict[str, Any] | None
+            cancel_event: threading.Event | None
             with self._cv:
                 if self._stop:
                     return
-                self._apply_pending_if_idle()
-                task = store.next_queued_task()
+                if not self._running_ids:
+                    # 只有完全没有任务在跑时才应用「等当前任务结束后切换」
+                    self._apply_pending_if_idle()
+                task = self._next_task_with_capacity()
                 if task is None:
                     self._cv.wait(timeout=2.0)
                     continue
-                if task["source"] != store.active_source(self._default_source):
-                    # 理论上不会发生（切换时已取消旧来源任务），兜底取消
-                    store.update_task(
-                        task["id"],
-                        status=store.STATUS_CANCELED,
-                        finished_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
-                        message="来源已切换，任务作废",
-                    )
-                    continue
                 store.mark_running(task["id"])
-                self._running_task_id = task["id"]
+                self._running_ids.add(task["id"])
                 cancel_event = threading.Event()
                 self._cancels[task["id"]] = cancel_event
+                self._cv.notify_all()
 
             try:
                 self._run_one(task, cancel_event)
@@ -596,11 +646,11 @@ class Scheduler:
                     )
                 except Exception:
                     pass
-
-            with self._cv:
-                self._running_task_id = None
-                self._cancels.pop(task["id"], None)
-                self._cv.notify_all()
+            finally:
+                with self._cv:
+                    self._running_ids.discard(task["id"])
+                    self._cancels.pop(task["id"], None)
+                    self._cv.notify_all()
 
     def _run_one(self, task: dict[str, Any], cancel_event: threading.Event) -> None:
         plugin = self._plugins.get(task["source"])

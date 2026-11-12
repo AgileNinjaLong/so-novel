@@ -132,23 +132,28 @@ def main() -> int:
         "结果带详情页链接（可直接喂给 CLI）",
     )
 
-    print("[3] 单线程队列与排队位置")
+    print("[3] 并发队列与任务隔离")
     if state(alice)["active_source"] != "sonovel":
         api(alice, "POST", "/api/source", json={"source": "sonovel", "mode": "cancel_now"})
     t1 = api(alice, "POST", "/api/tasks", json={
         "source": "sonovel", "title": "临渊行", "book_ref": BOOK_LONG, "fmt": "txt"})["task"]["id"]
     t2 = api(bob, "POST", "/api/tasks", json={
         "source": "sonovel", "title": "活着", "book_ref": BOOK_SMALL, "fmt": "txt"})["task"]["id"]
-    check(wait_until(lambda: state(alice)["running"] is not None, 60), "第一个任务开始运行")
-    snap = state(alice)
-    check(task_by_id(snap, t2) is None, "A 看不到 B 提交的任务（按用户隔离）")
-    check(snap["running_by_other"] is True, "A 能看到「当前有他人在下载」的提示（不含书名）")
-    check(snap["queue_length"] >= 1, f"全局队列长度可见（{snap['queue_length']}）")
+    check(wait_until(lambda: state(alice)["counts"].get("running", 0) >= 1, 60), "任务开始运行")
+    snap_a = state(alice)
+    check(task_by_id(snap_a, t2) is None, "A 看不到 B 提交的任务（按用户隔离）")
+    check(len(snap_a["tasks"]) >= 1, f"A 只看到自己的任务（{len(snap_a['tasks'])} 条）")
+    check(snap_a.get("task_concurrency", 1) >= 1,
+          f"服务端并发度 = {snap_a.get('task_concurrency')}")
     snap_b = state(bob)
-    second = task_by_id(snap_b, t2)
-    check(second is not None and second["status"] == "queued", "B 能看到自己的排队任务")
-    check(isinstance(second.get("queue_ahead"), int), f"B 的排队提示：前面还有 {second.get('queue_ahead')} 个")
-    check(snap_b["running"] is None, "B 看不到 A 正在下载的书名")
+    row_b = task_by_id(snap_b, t2)
+    check(row_b is not None, "B 能看到自己的任务")
+    check(row_b["status"] in {"queued", "running", "ready"}, f"B 的任务状态 {row_b['status']}")
+    if row_b["status"] == "queued":
+        check(isinstance(row_b.get("queue_ahead"), int),
+              f"排队提示：前面还有 {row_b.get('queue_ahead')} 个")
+    if snap_b.get("running") is None:
+        check(snap_b.get("running_by_other") is True, "B 看到「他人在下载」提示（不含书名）")
 
     print("[4] 越权操作被拒绝")
     try:

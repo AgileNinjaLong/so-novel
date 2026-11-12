@@ -183,6 +183,8 @@ class SoNovelPlugin:
             _write_search_config(config_path, port, work)
             argv = [
                 self._java_path() or settings.sonovel_java,
+                # 并发下载时每个 JVM 都占内存，这里给个上限避免把机器压垮
+                f"-Xmx{os.environ.get('SONOVEL_XMX', '512m')}",
                 "-Dmode=web",
                 f"-Dconfig.file={config_path}",
                 "-Dfile.encoding=UTF-8",
@@ -267,6 +269,8 @@ class SoNovelPlugin:
 
         argv = [
             self._java_path() or settings.sonovel_java,
+            # 每个任务一个 JVM，限制堆大小以便多任务并发
+            f"-Xmx{os.environ.get('SONOVEL_XMX', '512m')}",
             "-Dmode=cli",
             f"-Dconfig.file={config_path}",
             "-Dfile.encoding=UTF-8",

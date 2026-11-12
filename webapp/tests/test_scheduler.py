@@ -200,7 +200,7 @@ def main() -> int:
     store.init_db()
     plugin_a = FakePlugin("alpha", "来源A", seconds=1.5)
     plugin_b = FakePlugin("beta", "来源B", seconds=1.0)
-    scheduler = Scheduler({"alpha": plugin_a, "beta": plugin_b}, "alpha")
+    scheduler = Scheduler({"alpha": plugin_a, "beta": plugin_b}, "alpha", workers=1)
     scheduler.start()
 
     print("[1] 全局单线程与排队位置")
@@ -547,7 +547,51 @@ def main() -> int:
 
     app_settings.stall_timeout_sec = old_stall
 
+    print("[17] 并发下载：换一个 2 线程的调度器，同时跑 2 个任务")
     scheduler.shutdown()
+
+    multi_a = FakePlugin("multi", "并发源", seconds=2.0)
+    multi_b = FakePlugin("multi2", "并发源2", seconds=2.0)
+    scheduler2 = Scheduler({"multi": multi_a, "multi2": multi_b}, "multi", workers=2)
+    scheduler2.SOURCE_PARALLEL_LIMIT["multi"] = 2
+    scheduler2.start()
+
+    ids = []
+    for i in range(3):
+        row = scheduler2.enqueue(
+            source="multi", user_id=USER_A["id"], user_name=USER_A["username"],
+            title=f"并发{i}", book_ref=f"m{i}", fmt="txt",
+        )
+        ids.append(row["task"]["id"])
+
+    def running_count() -> int:
+        return len(store.running_tasks())
+
+    check(wait_until(lambda: running_count() >= 2, 20), f"同时有 2 个任务在跑（实际 {running_count()}）")
+    check(len(store.queued_tasks()) >= 1, f"第三个任务在排队（{len(store.queued_tasks())}）")
+    snap_multi = scheduler2.snapshot(USER_A)
+    check(snap_multi.get("task_concurrency") == 2, f"快照暴露并发度 {snap_multi.get('task_concurrency')}")
+    check(
+        wait_until(lambda: all(store.get_task(i)["status"] == "ready" for i in ids), 60),
+        "三个任务全部完成",
+    )
+
+    print("[18] 受限来源（番茄类）并发上限 1")
+    scheduler2.SOURCE_PARALLEL_LIMIT["multi"] = 1
+    pair = []
+    for i in range(2):
+        row = scheduler2.enqueue(
+            source="multi", user_id=USER_A["id"], user_name=USER_A["username"],
+            title=f"串行{i}", book_ref=f"s{i}", fmt="txt",
+        )
+        pair.append(row["task"]["id"])
+    check(wait_until(lambda: running_count() <= 1, 30), f"受限来源同时只跑 1 个（实际 {running_count()}）")
+    check(
+        wait_until(lambda: all(store.get_task(i)["status"] == "ready" for i in pair), 60),
+        "受限来源的任务依次完成",
+    )
+
+    scheduler2.shutdown()
     print()
     if FAILED:
         print(f"失败 {len(FAILED)} 项：{FAILED}")

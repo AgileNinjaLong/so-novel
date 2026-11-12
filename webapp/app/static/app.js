@@ -453,6 +453,13 @@ function renderTasks(snap) {
   const counts = snap.counts || {};
   $('#countBadge').textContent =
     `运行 ${counts.running || 0} · 排队 ${counts.queued || 0} · 待接收 ${counts.ready || 0}`;
+  const hint = $('#queueHint');
+  if (hint) {
+    const conc = snap.task_concurrency || 1;
+    hint.textContent = isAdmin
+      ? `全网同时最多下载 ${conc} 本；超出部分排队，排队中显示前面还有几个任务。运行中的任务若 60 秒没有进度更新会被判定超时。`
+      : `这里只显示你自己提交的书；全网同时最多下载 ${conc} 本，超出部分排队并显示前面还有几个任务。运行中的任务若 60 秒没有进度更新会被判定超时。`;
+  }
   $('#emptyQueue').textContent = isAdmin
     ? '还没有任何任务。'
     : '你还没有提交过下载，先在上面找一本。';
