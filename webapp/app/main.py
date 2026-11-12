@@ -65,7 +65,7 @@ async def gate(request: Request, call_next):
     path = request.url.path
 
     # 公开资源
-    if path.startswith("/static/") or path == "/healthz":
+    if path.startswith("/static/") or path in {"/healthz", "/favicon.ico"}:
         return await call_next(request)
     if path in {"/login", "/register"}:
         if auth.current_user(request) is not None:
@@ -629,6 +629,12 @@ async def healthz():
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """老浏览器会直接请求 /favicon.ico，返回站点图标避免 404。"""
+    return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
 
 
 @app.get("/")
