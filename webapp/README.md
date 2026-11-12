@@ -225,6 +225,21 @@ python serve.py
 | `WEBAPP_SEARCH_CONCURRENCY` | `2` | 同时进行的搜索请求上限（搜索是 CPU 密集，2 核机器 2 个就够） |
 | `WEBAPP_SEARCH_CACHE` | `300` | 相同「来源+关键词」的搜索结果缓存秒数，0 = 不缓存 |
 | `SONOVEL_XMX` | `384m` | 每个 so-novel 进程的 JVM 堆上限（并发下载时控制内存） |
+| `SONOVEL_CONCURRENCY` | `4` | 单个下载任务内部的章节抓取线程数 |
+| `SONOVEL_SEARCH_RULES` | `main.json` | 搜索用的书源规则文件；用 `scripts/trim_search_rules.py` 剔除慢源可大幅加速 |
+| `SONOVEL_SEARCH_CONCURRENCY` | `8` | 搜索时并行查询的书源数 |
+
+**搜索慢怎么办**：so-novel 的聚合搜索是并行查询所有书源，总耗时≈**最慢的那个源**。
+某些源从云服务器访问很慢（Cloudflare、被墙），会把搜索拖到 10~30 秒。剔除它们即可：
+
+```bash
+# 在数据卷的 rules 目录生成 search.json（下载仍用完整 main.json）
+docker exec novel-webapp python scripts/trim_search_rules.py \
+    --rules /data/plugins/sonovel/rules/main.json \
+    --out /data/plugins/sonovel/rules/search.json \
+    --exclude biquge365.net 52bqg.com
+# 然后在 .env 里设置 SONOVEL_SEARCH_RULES=search.json 并重建容器
+```
 | `WEBAPP_POLL_MS` | `1500` | 前端轮询间隔 |
 | `SONOVEL_*` | 自动探测 | so-novel CLI 路径、工作目录（需含 `rules/`）、单本并发 |
 | `TOMATO_*` | `18423` / `webapp-internal` | 番茄服务端口、内部口令、数据目录 |

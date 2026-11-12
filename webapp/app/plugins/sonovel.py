@@ -422,12 +422,14 @@ def _write_search_config(path: Path, port: int, work: Path) -> None:
             "extname = epub",
             "",
             "[source]",
-            "active-rules = main.json",
+            # 搜索可以单独指定规则文件（剔除慢源可以显著降低搜索耗时）
+            f"active-rules = {os.environ.get('SONOVEL_SEARCH_RULES', 'main.json')}",
             "search-limit = 30",
             "search-filter = 1",
             "",
             "[crawl]",
-            "concurrency = 4",
+            # 聚合搜索会逐个书源抓取+解析，并发越高越快（13 个书源按并发数并行）
+            f"concurrency = {os.environ.get('SONOVEL_SEARCH_CONCURRENCY', '8')}",
             "",
             "[web]",
             "enabled = 1",
