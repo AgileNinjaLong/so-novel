@@ -222,9 +222,9 @@ python serve.py
 | `WEBAPP_TASK_TIMEOUT` | `0` | 单任务总超时秒数，0 = 不限 |
 | `WEBAPP_STALL_TIMEOUT` | `60` | **无进度超时**：运行中连续这么多秒没有任何进度更新就判定超时失败，0 = 关闭 |
 | `WEBAPP_TASK_CONCURRENCY` | `2` | 同时下载的任务数（2 核小机器别调太高；番茄来源固定为 1） |
-| `WEBAPP_SEARCH_CONCURRENCY` | `4` | 同时进行的搜索请求上限（超出排队，不会压垮上游） |
-| `WEBAPP_SEARCH_CACHE` | `120` | 相同「来源+关键词」的搜索结果缓存秒数，0 = 不缓存 |
-| `SONOVEL_XMX` | `512m` | 每个 so-novel 进程的 JVM 堆上限（并发下载时控制内存） |
+| `WEBAPP_SEARCH_CONCURRENCY` | `2` | 同时进行的搜索请求上限（搜索是 CPU 密集，2 核机器 2 个就够） |
+| `WEBAPP_SEARCH_CACHE` | `300` | 相同「来源+关键词」的搜索结果缓存秒数，0 = 不缓存 |
+| `SONOVEL_XMX` | `384m` | 每个 so-novel 进程的 JVM 堆上限（并发下载时控制内存） |
 | `WEBAPP_POLL_MS` | `1500` | 前端轮询间隔 |
 | `SONOVEL_*` | 自动探测 | so-novel CLI 路径、工作目录（需含 `rules/`）、单本并发 |
 | `TOMATO_*` | `18423` / `webapp-internal` | 番茄服务端口、内部口令、数据目录 |

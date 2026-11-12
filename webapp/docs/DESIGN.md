@@ -180,10 +180,21 @@ TTL sweep      → 超时未 ack → 删除、状态 expired
 每个来源的并发上限由 `SOURCE_PARALLEL_LIMIT` 控制：`tomato: 1`（上游 `--server` 内部串行），
 其余按线程数。`_running_ids` 是内存里的权威计数，DB 的 `running` 只用于持久化与展示。
 
-**搜索**：`app/searchsvc.py` 提供进程内 `BoundedSemaphore`（`WEBAPP_SEARCH_CONCURRENCY`，默认 4）
-与 LRU 短缓存（`WEBAPP_SEARCH_CACHE`，默认 120 秒）。相同「来源+关键词」直接复用结果，
+**搜索**：`app/searchsvc.py` 提供进程内 `BoundedSemaphore`（`WEBAPP_SEARCH_CONCURRENCY`，默认 2）
+与 LRU 短缓存（`WEBAPP_SEARCH_CACHE`，默认 300 秒）。相同「来源+关键词」直接复用结果，
 所以多人同时搜不同词能并行、重复搜同一个词几乎瞬时。搜索本身跑在 `run_in_threadpool`，
 不阻塞事件循环。
+
+**容量参考（2 vCPU / 3.5G 实测）**：
+
+| 场景 | 新关键词搜索耗时 |
+| --- | --- |
+| 空闲 | 约 11 秒 |
+| 同时 2 个下载在跑（CPU 打满） | 约 31 秒 |
+| 命中缓存 | 0.06~0.1 秒 |
+
+搜索是 CPU 密集型（要解析 13 个书源），所以并发数开大不会变快，只会互相抢 CPU。
+把 `WEBAPP_TASK_CONCURRENCY` 降为 1 可以显著改善「下载时的搜索体验」。
 
 **内存**：每个 so-novel 任务是一个独立 JVM，用 `SONOVEL_XMX`（默认 512m）限制堆大小，
 2 核 / 3.5G 的机器实测可同时跑 2 个下载 + 并发搜索。

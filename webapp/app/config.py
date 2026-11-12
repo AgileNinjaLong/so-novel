@@ -54,13 +54,13 @@ class Settings:
     task_concurrency: int = field(
         default_factory=lambda: max(1, _env_int("WEBAPP_TASK_CONCURRENCY", 2))
     )
-    # 搜索并发上限（同时进行的搜索请求数）
+    # 搜索并发上限（同时进行的搜索请求数；搜索是 CPU 密集，小机器别开太大）
     search_concurrency: int = field(
-        default_factory=lambda: max(1, _env_int("WEBAPP_SEARCH_CONCURRENCY", 4))
+        default_factory=lambda: max(1, _env_int("WEBAPP_SEARCH_CONCURRENCY", 2))
     )
     # 搜索结果缓存秒数（相同来源+关键词在这段时间内直接复用）
     search_cache_sec: int = field(
-        default_factory=lambda: max(0, _env_int("WEBAPP_SEARCH_CACHE", 120))
+        default_factory=lambda: max(0, _env_int("WEBAPP_SEARCH_CACHE", 300))
     )
     # 运行中的任务若连续这么多秒没有任何进度更新，判定为卡住并终止（0=不检查）
     stall_timeout_sec: int = field(
