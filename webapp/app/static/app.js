@@ -214,12 +214,18 @@ function askSwitch() {
   if (!target || target === state.activeSource) return;
   state.pendingSource = target;
   const p = state.meta.plugins.find((x) => x.id === target);
-  const running = state.snapshot && state.snapshot.running;
-  const queueLen = (state.snapshot && state.snapshot.queue_length) || 0;
+  const snap = state.snapshot || {};
+  const running = snap.running;
+  const busyOther = !!snap.running_by_other;
+  const queueLen = snap.queue_length || 0;
 
-  if (!running) { applySwitch('cancel_now'); return; }
+  if (!running && !busyOther) { applySwitch('cancel_now'); return; }
+
+  const busyText = running
+    ? `当前正在下载「${running.title}」（来源：${sourceName(running.source)}）`
+    : '当前有其他用户的任务正在下载';
   $('#modalText').textContent =
-    `当前正在下载「${running.title}」（来源：${sourceName(running.source)}），队列中还有 ${queueLen} 个任务。\n\n` +
+    `${busyText}，队列中还有 ${queueLen} 个任务。\n\n` +
     `切换到「${p.name}」后，同一时间只会使用新来源（这是全局设置，会影响所有用户）：\n` +
     `· 「等当前任务结束后切换」：当前这本下完自动切换，旧来源的排队任务会被取消。\n` +
     `· 「立即取消并切换」：立刻中断当前下载并切换，旧来源的排队任务同样取消。`;
@@ -420,10 +426,21 @@ async function refresh() {
 function renderBanner(snap) {
   const banner = $('#switchBanner');
   const pending = snap.pending_switch;
-  if (!pending) { banner.classList.add('hidden'); return; }
+  const busy = snap.running_by_other
+    ? `当前有其他人的任务正在下载，你的任务在排队中（全网队列 ${snap.queue_length} 个）`
+    : '';
+  if (!pending) {
+    if (busy) {
+      banner.classList.remove('hidden');
+      banner.textContent = busy;
+    } else {
+      banner.classList.add('hidden');
+    }
+    return;
+  }
   banner.classList.remove('hidden');
   banner.textContent =
-    `待切换：当前任务完成后自动切换到「${sourceName(pending.source)}」（请求时间 ${pending.requested_at}）。切换生效前不能向当前来源提交新任务。`;
+    `${busy ? busy + '；' : ''}待切换：当前任务完成后自动切换到「${sourceName(pending.source)}」（请求时间 ${pending.requested_at}）。切换生效前不能向当前来源提交新任务。`;
 }
 
 function renderTasks(snap) {
@@ -431,8 +448,14 @@ function renderTasks(snap) {
   tbody.innerHTML = '';
   const tasks = snap.tasks || [];
   $('#emptyQueue').classList.toggle('hidden', tasks.length > 0);
+  const isAdmin = !!(state.me && state.me.role === 'admin');
+  $('#queueTitle').textContent = isAdmin ? '全部任务' : '我的下载队列';
+  const counts = snap.counts || {};
   $('#countBadge').textContent =
-    `运行 ${snap.counts.running || 0} · 排队 ${snap.counts.queued || 0} · 待接收 ${snap.counts.ready || 0}`;
+    `运行 ${counts.running || 0} · 排队 ${counts.queued || 0} · 待接收 ${counts.ready || 0}`;
+  $('#emptyQueue').textContent = isAdmin
+    ? '还没有任何任务。'
+    : '你还没有提交过下载，先在上面找一本。';
 
   tasks.forEach((t) => {
     const tr = document.createElement('tr');
@@ -543,7 +566,10 @@ function statusTag(t) {
   };
   const [cls, text] = map[t.status] || ['queued', t.status];
   let label = text;
-  if (t.status === 'queued' && t.queue_position) label += ` · 第 ${t.queue_position} 位`;
+  if (t.status === 'queued') {
+    const ahead = Number(t.queue_ahead || 0);
+    label += ahead > 0 ? ` · 前面还有 ${ahead} 个` : ' · 即将开始';
+  }
   return el('span', 'tag ' + cls, label);
 }
 

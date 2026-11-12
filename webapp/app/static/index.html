@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -83,14 +83,14 @@
 
   <section class="card queue-card">
     <div class="card-head">
-      <h2>下载队列 <span id="countBadge" class="badge info"></span></h2>
+      <h2><span id="queueTitle">我的下载队列</span> <span id="countBadge" class="badge info"></span></h2>
       <div class="queue-actions">
         <button id="bulkDeleteBtn" class="btn danger small hidden">删除选中<span id="bulkCount"></span></button>
         <button id="cleanupBtn" class="btn ghost small hidden">清理记录</button>
         <button id="refreshBtn" class="btn ghost small">刷新</button>
       </div>
     </div>
-    <p class="field-hint">同一时间只下载一本；多人提交按顺序排队。下载完成后请及时「接收文件」——文件只在服务器临时保存，接收成功后立即删除，未接收会超时删除。</p>
+    <p class="field-hint" id="queueHint">这里只显示你自己提交的书；同一时间全网只下载一本，排队中会显示前面还有几个任务。运行中的任务若 60 秒没有进度更新会被判定超时。</p>
     <div class="table-wrap">
       <table>
         <thead>

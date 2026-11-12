@@ -100,6 +100,46 @@ class EvilTitlePlugin(FakePlugin):
         return result
 
 
+class StallPlugin(FakePlugin):
+    """模拟上游卡住：完全不发进度，直到被取消。"""
+
+    def __init__(self, pid: str, name: str, stay: float = 30.0):
+        super().__init__(pid, name, seconds=stay)
+        self.stay = stay
+
+    def download(self, *, task, progress, cancel_event, library_dir):
+        deadline = time.time() + self.stay
+        while time.time() < deadline:
+            if cancel_event.is_set():
+                raise CanceledError()
+            time.sleep(0.2)
+        if cancel_event.is_set():
+            raise CanceledError()
+        raise RuntimeError("stalled")
+
+
+class SlowProgressPlugin(FakePlugin):
+    """很慢但持续有进度：用于验证进度更新会重置超时计时。"""
+
+    def __init__(self, pid: str, name: str, steps: int = 12, interval: float = 0.4):
+        super().__init__(pid, name, seconds=steps * interval)
+        self.steps = steps
+        self.interval = interval
+
+    def download(self, *, task, progress, cancel_event, library_dir):
+        for i in range(self.steps):
+            if cancel_event.is_set():
+                raise CanceledError()
+            time.sleep(self.interval)  # 总时长远大于 stall 限制
+            progress(done=i + 1, total=self.steps,
+                     percent=(i + 1) / self.steps * 100,
+                     message=f"已下载 {i + 1}/{self.steps} 章")
+        path = Path(library_dir) / task["id"] / "files" / "book.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x" * 1000, encoding="utf-8")
+        return DownloadResult(file_path=str(path), title=task["title"])
+
+
 def wait_until(predicate, timeout: float = 20.0, interval: float = 0.1) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -136,23 +176,35 @@ def main() -> int:
     check(t2["queue_position"] == 2, "第二个任务排队位置=2")
     check(wait_until(lambda: store.running_task() is not None, 10), "第一个任务开始运行")
     snap = scheduler.snapshot(USER_A)
-    check(snap["counts"].get("running") == 1, "只有 1 个 running")
-    check(snap["counts"].get("queued") == 1, "另一任务仍在排队")
+    check(snap["counts"].get("running") == 1, "甲自己的统计里有 1 个 running")
+    check(snap["counts"].get("queued", 0) == 0, "甲的统计里没有别人的排队任务")
+    check(snap["queue_length"] == 1, f"全局队列长度仍可见（数字）：{snap['queue_length']}")
     running_id = store.running_task()["id"]
 
-    print("[2] 任务归属：别人的任务只能看，不能操作")
+    print("[2] 任务隔离：普通用户只看自己的，管理员看全部")
     snap_a = scheduler.snapshot(USER_A)
     mine = task_in(snap_a, t1["task"]["id"])
     other = task_in(snap_a, t2["task"]["id"])
     check(mine["mine"] is True and mine["can_cancel"] is True, "自己的任务可取消")
-    check(other["mine"] is False and other["can_cancel"] is False, "别人的排队任务不可取消")
-    check(other["has_file"] is False, "别人的任务不暴露文件")
-    check(other.get("queue_position") == 1, "仍能看到别人的排队位置")
+    check(other is None, "看不到别人的任务（列表里不存在）")
+    check(len(snap_a["tasks"]) == 1, f"甲只看到 1 条（实际 {len(snap_a['tasks'])}）")
+    check(snap_a["running"] is not None and snap_a["running"]["id"] == t1["task"]["id"],
+          "甲能看到自己正在下载的书名")
+    check(snap_a["running_by_other"] is False, "甲的任务在运行时不算「别人在下载」")
+
     snap_admin = scheduler.snapshot(ADMIN)
-    admin_view = task_in(snap_admin, t2["task"]["id"])
-    check(admin_view["can_cancel"] is True, "管理员可取消任何任务")
+    check(len(snap_admin["tasks"]) == 2, f"管理员能看到全部 2 条（实际 {len(snap_admin['tasks'])}）")
+    check(task_in(snap_admin, t2["task"]["id"])["can_cancel"] is True, "管理员可取消任何任务")
+    check(snap_admin["counts"].get("running", 0) + snap_admin["counts"].get("queued", 0) >= 1,
+          "管理员统计是全局的")
+
     snap_b = scheduler.snapshot(USER_B)
+    check(len(snap_b["tasks"]) == 1, f"乙只看到自己的 1 条（实际 {len(snap_b['tasks'])}）")
     check(task_in(snap_b, t2["task"]["id"])["mine"] is True, "乙看到的是自己的任务")
+    check(snap_b["running"] is None, "别人在下载时不暴露对方书名")
+    check(snap_b["running_by_other"] is True, "提示「当前有他人在下载」")
+    queued_b = task_in(snap_b, t2["task"]["id"])
+    check(queued_b.get("queue_ahead") == 0, f"排队提示：前面还有 {queued_b.get('queue_ahead')} 个")
 
     print("[3] after_current 切换（等当前下载结束）")
     result = scheduler.request_switch("beta", "after_current")
@@ -372,6 +424,49 @@ def main() -> int:
     dir_b = app_settings.temp_root / tb["task"]["id"]
     check(dir_a.is_dir() and dir_b.is_dir(), "各自的临时目录独立存在")
     check(str(dir_a) != str(dir_b), "临时目录不是同一个（不会互相覆盖）")
+
+    print("[15] 进度超时：连续 N 秒没更新就判定失败（测试里设成 3 秒）")
+    from app.config import settings as app_settings
+
+    old_stall = app_settings.stall_timeout_sec
+    app_settings.stall_timeout_sec = 3
+
+    stalled = StallPlugin("stall", "卡住源", stay=30)
+    slow = SlowProgressPlugin("slow", "慢速源", steps=12, interval=0.4)  # 约 4.8s > 3s
+    scheduler._plugins["stall"] = stalled
+    scheduler._plugins["slow"] = slow
+
+    scheduler.request_switch("stall", "cancel_now")
+    t_stall = scheduler.enqueue(
+        source="stall", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="卡住的书", book_ref="s", fmt="txt",
+    )
+    tid_stall = t_stall["task"]["id"]
+    check(wait_until(lambda: store.get_task(tid_stall)["status"] == "running", 15), "卡住任务开跑")
+    check(
+        wait_until(lambda: store.get_task(tid_stall)["status"] in {"failed", "canceled"}, 20),
+        "无进度后被判定结束",
+    )
+    row = store.get_task(tid_stall)
+    check(row["status"] == "failed", f"状态是失败而不是暂停/取消（实际 {row['status']}）")
+    check("超时" in (row["error"] or ""), f"错误里标明超时：{row['error']}")
+    check(scheduler.deliverable_path(tid_stall) is None, "超时后临时文件已清理")
+
+    scheduler.request_switch("slow", "cancel_now")
+    t_slow = scheduler.enqueue(
+        source="slow", user_id=USER_A["id"], user_name=USER_A["username"],
+        title="慢速的书", book_ref="w", fmt="txt",
+    )
+    tid_slow = t_slow["task"]["id"]
+    check(
+        wait_until(lambda: store.get_task(tid_slow)["status"] in {"ready", "failed"}, 30),
+        "慢速任务结束",
+    )
+    row_slow = store.get_task(tid_slow)
+    check(row_slow["status"] == "ready", f"持续有进度的任务正常完成（实际 {row_slow['status']}）")
+
+    app_settings.stall_timeout_sec = old_stall
+    scheduler.remove_task(tid_slow)
 
     scheduler.shutdown()
     print()

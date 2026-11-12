@@ -173,6 +173,22 @@ TTL sweep      → 超时未 ack → 删除、状态 expired
 不用「响应结束即删除」，因为服务端无法区分「浏览器已保存成功」与「断开但内核缓冲已接收」；
 改为前段 `fetch → blob → 保存 → ack`，保证**没有确认就不删**（最坏只是多留到 TTL）。
 
+### 任务可见性（隔离）
+
+- `/api/state` 对普通用户只返回 `user_id == 自己` 的任务；管理员返回全部；
+- 非管理员看不到「正在下载的书名」，只得到 `running_by_other` 布尔值与全局 `queue_length` 数字，
+  避免泄露他人请求内容；排队任务附带 `queue_ahead`（前面还有几个）用于提示；
+- `counts` 也按查看者统计（管理员为全局，普通用户只统计自己的）。
+
+### 无进度超时（stall watchdog）
+
+`_run_one` 为运行中的任务启动看门狗线程：`progress()` 每次被调用都刷新 `activity` 时间戳；
+若 `now - activity > settings.stall_timeout_sec`（默认 60，`WEBAPP_STALL_TIMEOUT`），看门狗置
+`timeout_hit`、设置取消事件并调用 `plugin.cancel()` 终止上游进程，最终状态记为 `failed`
+（错误信息「下载超时：连续 N 秒没有收到进度更新」），临时文件一并清理。
+
+只要上游持续上报进度就不会误杀；设为 `0` 关闭该检查（仍可用 `WEBAPP_TASK_TIMEOUT` 做总时长上限）。
+
 ### 任务归属、删除与同书隔离
 
 - 每个任务一行记录，`user_id` 归属清晰；临时目录按 `runtime/tmp/<task_id>` 隔离，

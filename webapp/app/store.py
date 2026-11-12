@@ -667,11 +667,18 @@ def delete_task_records(task_ids: Iterable[str], *, user_id: str | None = None) 
     return [dict(row) for row in removable]
 
 
-def task_counts() -> dict[str, int]:
+def task_counts(user_id: str | None = None) -> dict[str, int]:
+    """按状态统计任务数；`user_id` 不为空时只统计该用户的任务。"""
     with _lock:
-        rows = _connection().execute(
-            "SELECT status, COUNT(*) AS c FROM tasks GROUP BY status"
-        ).fetchall()
+        if user_id is None:
+            rows = _connection().execute(
+                "SELECT status, COUNT(*) AS c FROM tasks GROUP BY status"
+            ).fetchall()
+        else:
+            rows = _connection().execute(
+                "SELECT status, COUNT(*) AS c FROM tasks WHERE user_id = ? GROUP BY status",
+                (user_id,),
+            ).fetchall()
     return {row["status"]: int(row["c"]) for row in rows}
 
 

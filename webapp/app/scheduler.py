@@ -97,10 +97,20 @@ class Scheduler:
         running = store.running_task()
         queued = store.queued_tasks()
         positions = {t["id"]: i + 1 for i, t in enumerate(queued)}
+        ahead = {t["id"]: i for i, t in enumerate(queued)}
         viewer_id = (viewer or {}).get("id")
         viewer_is_admin = (viewer or {}).get("role") == store.ROLE_ADMIN
+
+        all_tasks = store.list_tasks(limit=PRUNE_KEEP)
+        # 普通用户只能看到自己提交的任务；管理员能看到全部
+        visible = (
+            all_tasks
+            if viewer_is_admin
+            else [t for t in all_tasks if viewer_id and t.get("user_id") == viewer_id]
+        )
+
         tasks: list[dict[str, Any]] = []
-        for task in store.list_tasks(limit=PRUNE_KEEP):
+        for task in visible:
             mine = bool(viewer_id) and task.get("user_id") == viewer_id
             can_manage = mine or viewer_is_admin
             item = {
@@ -114,7 +124,6 @@ class Scheduler:
                 "chapters_done": task["chapters_done"],
                 "chapters_total": task["chapters_total"],
                 "message": task["message"],
-                # 别人的失败原因不展示，避免泄露他人请求信息
                 "error": task["error"] if can_manage else None,
                 "created_at": task["created_at"],
                 "started_at": task["started_at"],
@@ -137,18 +146,30 @@ class Scheduler:
             }
             if task["status"] == store.STATUS_QUEUED:
                 item["queue_position"] = positions.get(task["id"], 0)
+                item["queue_ahead"] = ahead.get(task["id"], 0)
             tasks.append(item)
+
+        running_visible = None
+        if running is not None and (viewer_is_admin or running.get("user_id") == viewer_id):
+            running_visible = {
+                "id": running["id"],
+                "title": running["title"],
+                "source": running["source"],
+            }
+        running_by_other = bool(running) and not viewer_is_admin and running.get("user_id") != viewer_id
+
         return {
             "active_source": active,
             "pending_switch": pending,
-            "running": (
-                {"id": running["id"], "title": running["title"], "source": running["source"]}
-                if running
-                else None
-            ),
+            # 只有自己的任务（或管理员）才暴露「正在下载的是哪本」
+            "running": running_visible,
+            "running_by_other": running_by_other,
+            # 队列总长度只给数字，不泄露别人的书名
             "queue_length": len(queued),
-            "counts": store.task_counts(),
+            "counts": store.task_counts(None if viewer_is_admin else viewer_id),
             "tasks": tasks,
+            "stall_timeout_sec": settings.stall_timeout_sec,
+            "is_admin": viewer_is_admin,
         }
 
     # ---------------- 提交任务 ----------------
@@ -256,6 +277,20 @@ class Scheduler:
             store.finish_task(
                 task_id, store.STATUS_CANCELED, message="已取消", error=reason or "已取消"
             )
+
+    def _fail_timeout(self, task_id: str, stall_sec: int, detail: str = "") -> None:
+        """进度长时间没有更新：判定超时失败（不是暂停/取消）。"""
+        self._drop_temp(task_id)
+        self._paused.discard(task_id)
+        reason = f"下载超时：连续 {stall_sec} 秒没有收到进度更新"
+        if detail:
+            reason += f"（{detail}）"
+        store.finish_task(
+            task_id,
+            store.STATUS_FAILED,
+            error=reason,
+            message=f"下载超时（{stall_sec} 秒无进度），可点「重新下载」重试",
+        )
 
     # ---------------- 取消 / 删除 / 暂停 --------------
     PLACEHOLDER_TITLES = {"", "未命名", "book", "untitled"}
@@ -559,6 +594,11 @@ class Scheduler:
             return
 
         last_progress = {"ts": 0.0, "pct": -1.0, "done": -1, "total": -1}
+        # 任何一次进度回调都算「有动静」；连续 stall_timeout_sec 没有动静就判定卡住
+        activity = {"ts": time.time()}
+        stall_limit = int(settings.stall_timeout_sec or 0)
+        timeout_hit = threading.Event()
+        stop_watchdog = threading.Event()
 
         def progress(
             done: int | None = None,
@@ -568,6 +608,7 @@ class Scheduler:
             title: str | None = None,
         ) -> None:
             now = time.time()
+            activity["ts"] = now
             changed = False
             if percent is not None:
                 changed = abs(float(percent) - last_progress["pct"]) >= 0.5
@@ -601,6 +642,23 @@ class Scheduler:
             except Exception:
                 pass
 
+        def watchdog() -> None:
+            """进度长时间不更新就强制终止，避免任务永远卡在 running。"""
+            while not stop_watchdog.is_set():
+                if stall_limit and (time.time() - activity["ts"]) > stall_limit:
+                    timeout_hit.set()
+                    cancel_event.set()
+                    try:
+                        plugin.cancel(task["id"])
+                    except Exception:
+                        pass
+                    return
+                stop_watchdog.wait(1.0)
+
+        watcher = threading.Thread(target=watchdog, daemon=True) if stall_limit else None
+        if watcher is not None:
+            watcher.start()
+
         try:
             result = plugin.download(
                 task=task,
@@ -610,10 +668,15 @@ class Scheduler:
                 library_dir=str(settings.temp_dir_for(task["id"])),
             )
         except CanceledError:
-            self._mark_stopped(task["id"])
+            if timeout_hit.is_set():
+                self._fail_timeout(task["id"], stall_limit)
+            else:
+                self._mark_stopped(task["id"])
             return
         except Exception as exc:  # noqa: BLE001 - 上游异常统一落库
-            if cancel_event.is_set():
+            if timeout_hit.is_set():
+                self._fail_timeout(task["id"], stall_limit, detail=str(exc)[:300])
+            elif cancel_event.is_set():
                 self._mark_stopped(task["id"], str(exc)[:2000])
             else:
                 self._drop_temp(task["id"])
@@ -621,6 +684,10 @@ class Scheduler:
                     task["id"], store.STATUS_FAILED, error=str(exc), message="下载失败"
                 )
             return
+        finally:
+            stop_watchdog.set()
+            if watcher is not None:
+                watcher.join(timeout=2.0)
 
         if cancel_event.is_set():
             self._mark_stopped(task["id"])

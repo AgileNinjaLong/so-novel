@@ -141,10 +141,14 @@ def main() -> int:
         "source": "sonovel", "title": "活着", "book_ref": BOOK_SMALL, "fmt": "txt"})["task"]["id"]
     check(wait_until(lambda: state(alice)["running"] is not None, 60), "第一个任务开始运行")
     snap = state(alice)
-    second = task_by_id(snap, t2)
-    check(second["status"] == "queued", "第二个任务排队中")
-    check(second.get("queue_position") == 1, "第二个任务排队位置=1")
-    check(second["mine"] is False, "A 看到 B 的任务不是自己的")
+    check(task_by_id(snap, t2) is None, "A 看不到 B 提交的任务（按用户隔离）")
+    check(snap["running_by_other"] is True, "A 能看到「当前有他人在下载」的提示（不含书名）")
+    check(snap["queue_length"] >= 1, f"全局队列长度可见（{snap['queue_length']}）")
+    snap_b = state(bob)
+    second = task_by_id(snap_b, t2)
+    check(second is not None and second["status"] == "queued", "B 能看到自己的排队任务")
+    check(isinstance(second.get("queue_ahead"), int), f"B 的排队提示：前面还有 {second.get('queue_ahead')} 个")
+    check(snap_b["running"] is None, "B 看不到 A 正在下载的书名")
 
     print("[4] 越权操作被拒绝")
     try:

@@ -50,6 +50,10 @@ class Settings:
     poll_interval_ms: int = field(default_factory=lambda: _env_int("WEBAPP_POLL_MS", 1500))
     # 单任务超时（秒），0 表示不限制
     task_timeout_sec: int = field(default_factory=lambda: _env_int("WEBAPP_TASK_TIMEOUT", 0))
+    # 运行中的任务若连续这么多秒没有任何进度更新，判定为卡住并终止（0=不检查）
+    stall_timeout_sec: int = field(
+        default_factory=lambda: _env_int("WEBAPP_STALL_TIMEOUT", 60)
+    )
     # 下载完成后临时文件保留多少分钟（供用户接收），超时自动删除
     file_ttl_min: int = field(default_factory=lambda: _env_int("WEBAPP_FILE_TTL_MIN", 120))
 
